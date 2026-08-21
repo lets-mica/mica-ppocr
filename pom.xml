@@ -51,7 +51,7 @@
         <logback.version>1.6.3</logback.version>
         <lombok.version>1.18.46</lombok.version>
         <mica-auto.version>4.0.1</mica-auto.version>
-        <spring.boot.version>3.5.16</spring.boot.version>
+        <spring.boot.version>4.1.1</spring.boot.version>
         <solon.version>4.0.6</solon.version>
     </properties>
 
