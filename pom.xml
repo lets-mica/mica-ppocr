@@ -51,7 +51,7 @@
         <opencv.version>4.9.0-0</opencv.version>
         <jts.version>1.20.0</jts.version>
         <slf4j.version>2.0.18</slf4j.version>
-        <lombok.version>1.18.46</lombok.version>
+        <lombok.version>1.18.48</lombok.version>
         <mica-auto.version>2.3.5</mica-auto.version>
         <spring.boot.version>2.7.18</spring.boot.version>
         <solon.version>4.0.6</solon.version>
