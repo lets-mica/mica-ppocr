@@ -70,9 +70,15 @@ public class VatInvoiceParser {
 		"\\d{4}[-./年]\\d{1,2}[-./月]\\d{1,2}日?");
 	/**
 	 * 大写金额关键字。
+	 * <p>字符集同时收录简繁体：
+	 * <ul>
+	 *   <li>金额单位：圆(繁) / 元(简) / 万(简) / 萬(繁)</li>
+	 *   <li>其它数字：零壹贰叁肆伍陆柒捌玖拾佰仟亿角分整</li>
+	 * </ul>
+	 * 现代增值税发票多写"元"（U+5143），"圆"（U+5706）仅保留兼容。
 	 */
 	private static final Pattern UPPER_MONEY_PATTERN = Pattern.compile(
-		"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆角分整]{3,}");
+		"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整]{3,}");
 	/**
 	 * 小写金额：¥1234.56 / ￥1234.56 / 1234.56。
 	 */
@@ -922,15 +928,22 @@ public class VatInvoiceParser {
 	}
 
 	/**
-	 * 老版增值税发票明细表列定义（走公共行聚类解析，列 key 即 InvoiceItem 字段名）。
-	 * 老版无单价/数量解析（历史字段未覆盖），这两列留空。
-	 */
-	private static final List<InvoiceTableParser.ColumnSpec> VAT_COLUMNS = CollUtil.listOf(
-		new InvoiceTableParser.ColumnSpec("goodsName", new String[]{"货物或应税劳务", "货物或应税服务"}, null, 150),
-		new InvoiceTableParser.ColumnSpec("amount", new String[]{"金额"}, AMOUNT_NUM_PATTERN, 30),
-		new InvoiceTableParser.ColumnSpec("taxRate", new String[]{"税率"}, TAX_RATE_PATTERN, 30),
-		new InvoiceTableParser.ColumnSpec("taxAmount", new String[]{"税额"}, AMOUNT_NUM_PATTERN, 30)
-	);
+ * 老版增值税发票明细表列定义（走公共行聚类解析，列 key 即 InvoiceItem 字段名）。
+ * <p>表头候选按优先级：
+ * <ul>
+ *   <li>货物名称：老版用 "货物或应税劳务/服务"；通行费发票/数电票用 "项目名称"</li>
+ *   <li>金额 / 税率 / 税额：跨版本统一</li>
+ * </ul>
+ * 老版无单价/数量解析（历史字段未覆盖），这两列留空。
+ * <p>xTolerance 调参：通行费发票列宽紧凑（金额/税额 4 字 + 留白，
+ * 值框 center 距表头 end 常 30~50px），税额列给到 50 以覆盖 2 位小数税额。
+ */
+private static final List<InvoiceTableParser.ColumnSpec> VAT_COLUMNS = CollUtil.listOf(
+	new InvoiceTableParser.ColumnSpec("goodsName", new String[]{"货物或应税劳务", "货物或应税服务", "项目名称"}, null, 150),
+	new InvoiceTableParser.ColumnSpec("amount", new String[]{"金额"}, AMOUNT_NUM_PATTERN, 30),
+	new InvoiceTableParser.ColumnSpec("taxRate", new String[]{"税率"}, TAX_RATE_PATTERN, 30),
+	new InvoiceTableParser.ColumnSpec("taxAmount", new String[]{"税额"}, AMOUNT_NUM_PATTERN, 50)
+);
 
 	/**
 	 * 解析明细表（货物名称 / 金额 / 税率 / 税额，行聚类结构化）。

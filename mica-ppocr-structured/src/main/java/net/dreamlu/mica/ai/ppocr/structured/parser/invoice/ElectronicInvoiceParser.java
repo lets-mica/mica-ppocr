@@ -68,10 +68,10 @@ public class ElectronicInvoiceParser {
 		"\\d{4}[-./年]\\d{1,2}[-./月]\\d{1,2}日?");
 
 	/**
-	 * 大写金额关键字（3 字以上）。
+	 * 大写金额关键字（3 字以上，简繁体兼容：圆 / 元 / 万 / 萬）。
 	 */
 	private static final Pattern UPPER_MONEY_PATTERN = Pattern.compile(
-		"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆角分整]{3,}");
+		"[零壹贰叁肆伍陆柒捌玖拾佰仟万亿圆元角分整]{3,}");
 
 	/**
 	 * 小写金额：¥/￥/? + 数字 + 小数。? 是 OCR 对 ¥ 的常见误识，允许匹配后归一化为 ¥。

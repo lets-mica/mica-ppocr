@@ -229,12 +229,25 @@ public class LabelMatcher {
 			String text = r.text();
 			if (text.startsWith(label) && text.length() > label.length()) {
 				String stripped = text.substring(label.length());
+				// 合并框"发票代码：041002000112" → 冒号是标签与值的分隔符,
+				// 须继续剥离前导标点,否则下游正则(^\d{8,12}$)无法命中。
+				int s = 0;
+				while (s < stripped.length() && isLabelPunct(stripped.charAt(s))) s++;
+				stripped = stripped.substring(s);
 				if (stripped.trim().isEmpty()) continue;
 				log.debug("结构化解析：标签 \"{}\" 从合并框 \"{}\" 剥出值 \"{}\"", label, text, stripped);
 				return LabeledMatch.of(stripped, r);
 			}
 		}
 		return LabeledMatch.textOnly(null);
+	}
+
+	/**
+	 * 判定字符是否属于"标签-值"分隔标点：合并框中标签与值之间常带的符号。
+	 */
+	private static boolean isLabelPunct(char c) {
+		return c == ':' || c == '：' || c == '、' || c == ' '
+			|| c == ',' || c == '，' || c == ';' || c == '；';
 	}
 
 	/**

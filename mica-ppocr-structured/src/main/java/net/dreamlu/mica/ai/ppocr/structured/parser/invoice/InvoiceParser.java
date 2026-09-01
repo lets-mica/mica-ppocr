@@ -58,6 +58,15 @@ public class InvoiceParser extends BaseStructuredParser<InvoiceResult> {
 
 	@Override
 	public InvoiceResult parseResults(List<PPOcrV6Result> results) {
+		// 1) 含"校验码"标签 → 老版 VAT / 通行费发票,不走电子发票判别
+		//    （电子发票没有"校验码"标签；通行费发票的 20 位校验码会被
+		//     ElectronicInvoiceParser 误识别为发票号码,导致整张发票解析错位）
+		if (hasCheckCodeLabel(results)) {
+			InvoiceResult r = vatParser.parseResults(results);
+			r.setVersion(InvoiceVersion.VAT);
+			return r;
+		}
+		// 2) 默认电子发票优先
 		InvoiceResult r = electronicParser.parseResults(results);
 		if (r == null) {
 			r = vatParser.parseResults(results);
@@ -66,5 +75,17 @@ public class InvoiceParser extends BaseStructuredParser<InvoiceResult> {
 			r.setVersion(InvoiceVersion.ELECTRONIC);
 		}
 		return r;
+	}
+
+	/**
+	 * 是否存在"校验码"标签框（合并框"校验码：12345..."或独立标签）。
+	 * 通行费发票 / 老版 VAT 专用发票固定有该字段，数电票无。
+	 */
+	private static boolean hasCheckCodeLabel(List<PPOcrV6Result> results) {
+		for (PPOcrV6Result r : results) {
+			String t = r.text();
+			if (t.equals("校验码") || t.startsWith("校验码")) return true;
+		}
+		return false;
 	}
 }

@@ -182,6 +182,15 @@ final class InvoiceTableParser {
 			// 表头残缺单字/双字框（如 "金"/"额"/"税"/"税率"）排除：
 			// 字符全部来自表头 label（如 "金额"+"税率"+"税额"），fragment 合成框不含原框
 			if (text.length() <= 2 && isAllHeaderChars(text, headerChars)) continue;
+			// 排除表头区候选：与表头同 y 范围（含向上半行容差）的非表头 fragment
+			// （如通行费发票的"车牌号"/"类型"等未被识别的表头 fragment），否则会被
+			// 当作数据行收集，形成含 label 文本的伪行。
+			// 老版竖版发票的"货物或应税劳务"表头 y_max 较大，与数据行 y 中心重叠
+			// (普通发票数据 y_center - headerMaxY 范围约 -0.4 * oneLine ~ +0.3 * oneLine)，
+			// 通行费发票的表头 fragment 相对偏移 ≈ -0.5 * oneLine (更深)，故以
+			// oneLine/2 为界。
+			int yCenter = (LabelMatcher.minY(box) + LabelMatcher.maxY(box)) / 2;
+			if (yCenter <= headerMaxY - oneLine / 2) continue;
 			int centerX = (LabelMatcher.minX(box) + LabelMatcher.maxX(box)) / 2;
 			if (!inAnyColumn(centerX, headers)) continue;
 			int y0 = LabelMatcher.minY(box);

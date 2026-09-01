@@ -360,4 +360,235 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertNull(r.getReviewer());
 		assertEquals("钟寒冰", r.getIssuer());
 	}
+
+	// ========================================================================
+	// 诊断：直接调 VatInvoiceParser 跑通行费发票 OCR 数据
+	// ========================================================================
+
+	/**
+	 * 用统一分发器 {@link InvoiceParser} 跑用户提供的河南增值通行费发票 OCR 数据,
+	 * 验证"校验码"标签触发的 VAT 分支路由,输出全部字段供诊断,断言只验证关键字段。
+	 */
+	@Test
+	void diagnose_tollFeeInvoice_dispatcher() {
+		List<PPOcrV6Result> results = buildTollFeeOcr();
+		InvoiceResult r = PARSER.parseResults(results);
+		StringBuilder sb = new StringBuilder();
+		sb.append("\n========== InvoiceParser 分发器输出 ==========\n");
+		sb.append("version:           ").append(r.getVersion()).append('\n');
+		sb.append("invoiceCode:       ").append(r.getInvoiceCode()).append('\n');
+		sb.append("invoiceNo:         ").append(r.getInvoiceNo()).append('\n');
+		sb.append("invoiceDate:       ").append(r.getInvoiceDate()).append('\n');
+		sb.append("buyerName:         ").append(r.getBuyerName()).append('\n');
+		sb.append("buyerTaxNo:        ").append(r.getBuyerTaxNo()).append('\n');
+		sb.append("buyerAddressPhone: ").append(r.getBuyerAddressPhone()).append('\n');
+		sb.append("buyerBankAccount:  ").append(r.getBuyerBankAccount()).append('\n');
+		sb.append("sellerName:        ").append(r.getSellerName()).append('\n');
+		sb.append("sellerTaxNo:       ").append(r.getSellerTaxNo()).append('\n');
+		sb.append("sellerAddressPhone:").append(r.getSellerAddressPhone()).append('\n');
+		sb.append("sellerBankAccount: ").append(r.getSellerBankAccount()).append('\n');
+		if (r.getItems() != null) {
+			sb.append("items.size:        ").append(r.getItems().size()).append('\n');
+			for (int i = 0; i < r.getItems().size(); i++) {
+				InvoiceItem it = r.getItems().get(i);
+				sb.append(String.format("  item[%d]: name=%s amount=%s rate=%s tax=%s%n",
+					i, it.getGoodsName(), it.getAmount(), it.getTaxRate(), it.getTaxAmount()));
+			}
+		}
+		sb.append("totalAmountUpper:  ").append(r.getTotalAmountUpper())
+			.append("  (chars=").append(r.getTotalAmountUpper() == null ? "null" : r.getTotalAmountUpper().length()).append(")\n");
+		sb.append("totalAmountLower:  ").append(r.getTotalAmountLower()).append('\n');
+		sb.append("payee:             ").append(r.getPayee()).append('\n');
+		sb.append("reviewer:          ").append(r.getReviewer()).append('\n');
+		sb.append("issuer:            ").append(r.getIssuer()).append('\n');
+		sb.append("==============================================\n");
+		String output = sb.toString();
+		System.out.println(output);
+		try {
+			java.nio.file.Path out = java.nio.file.Paths.get("target", "diagnose-tollfee-dispatcher.txt").toAbsolutePath();
+			java.nio.file.Files.write(out, output.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+		} catch (Exception e) {
+			System.err.println("诊断输出写文件失败: " + e.getMessage());
+		}
+
+		// 关键断言: 分发器应正确路由到 VAT 分支 (因含"校验码"标签)
+		assertEquals(InvoiceVersion.VAT, r.getVersion());
+		assertEquals("041002000112", r.getInvoiceCode());
+		assertEquals("53329252", r.getInvoiceNo());
+		assertEquals("2022年11月13日", r.getInvoiceDate());
+		assertEquals("郑州约克计算机技术有限公司", r.getBuyerName());
+		assertEquals("91410105665970335G", r.getBuyerTaxNo());
+		assertEquals("河南交通投资集团有限公司", r.getSellerName());
+		assertEquals("91410000693505019R", r.getSellerTaxNo());
+		assertEquals("朱晓珂", r.getPayee());
+		assertEquals("关济民", r.getReviewer());
+		assertEquals("任秋颖", r.getIssuer());
+		assertEquals("玖拾柒元叁角叁分", r.getTotalAmountUpper());
+		assertEquals("￥97.33", r.getTotalAmountLower());
+		assertNotNull(r.getItems());
+		assertEquals(1, r.getItems().size());
+		InvoiceItem it = r.getItems().get(0);
+		assertEquals("94.50", it.getAmount());
+		assertEquals("3%", it.getTaxRate());
+		assertEquals("2.83", it.getTaxAmount());
+	}
+
+	/**
+	 * 直接调 {@link VatInvoiceParser} 跑用户提供的河南增值通行费发票 OCR 数据
+	 * (绕过分发器,不进入 ElectronicInvoiceParser 误判分支),
+	 * 输出全部字段供诊断,断言只验证关键字段以避免 OCR 噪声脆性。
+	 */
+	@Test
+	void diagnose_tollFeeInvoice_vatOnly() {
+		List<PPOcrV6Result> results = buildTollFeeOcr();
+		VatInvoiceParser vat = new VatInvoiceParser();
+		InvoiceResult r = vat.parseResults(results);
+		System.out.println("\n========== VatInvoiceParser 直测输出 ==========");
+		System.out.println("version:           " + (String) null);
+		System.out.println("invoiceCode:       " + r.getInvoiceCode());
+		System.out.println("invoiceNo:         " + r.getInvoiceNo());
+		System.out.println("invoiceDate:       " + r.getInvoiceDate());
+		System.out.println("buyerName:         " + r.getBuyerName());
+		System.out.println("buyerTaxNo:        " + r.getBuyerTaxNo());
+		System.out.println("buyerAddressPhone: " + r.getBuyerAddressPhone());
+		System.out.println("buyerBankAccount:  " + r.getBuyerBankAccount());
+		System.out.println("sellerName:        " + r.getSellerName());
+		System.out.println("sellerTaxNo:       " + r.getSellerTaxNo());
+		System.out.println("sellerAddressPhone:" + r.getSellerAddressPhone());
+		System.out.println("sellerBankAccount: " + r.getSellerBankAccount());
+		if (r.getItems() != null) {
+			System.out.println("items.size:        " + r.getItems().size());
+			for (int i = 0; i < r.getItems().size(); i++) {
+				InvoiceItem it = r.getItems().get(i);
+				System.out.printf("  item[%d]: name=%s amount=%s rate=%s tax=%s%n",
+					i, it.getGoodsName(), it.getAmount(), it.getTaxRate(), it.getTaxAmount());
+			}
+		}
+		System.out.println("totalAmountUpper:  " + r.getTotalAmountUpper()
+			+ "  (chars=" + (r.getTotalAmountUpper() == null ? "null" : r.getTotalAmountUpper().length()) + ")");
+		System.out.println("totalAmountLower:  " + r.getTotalAmountLower());
+		System.out.println("payee:             " + r.getPayee());
+		System.out.println("reviewer:          " + r.getReviewer());
+		System.out.println("issuer:            " + r.getIssuer());
+		System.out.println("==============================================\n");
+
+		// 已知正确值的最小断言集(确认 Vat 直测关键字段正确)
+		assertEquals("041002000112", r.getInvoiceCode());
+		assertEquals("53329252", r.getInvoiceNo());
+		assertEquals("2022年11月13日", r.getInvoiceDate());
+		assertEquals("郑州约克计算机技术有限公司", r.getBuyerName());
+		assertEquals("91410105665970335G", r.getBuyerTaxNo());
+		assertEquals("河南交通投资集团有限公司", r.getSellerName());
+		assertEquals("91410000693505019R", r.getSellerTaxNo());
+		assertEquals("朱晓珂", r.getPayee());
+		assertEquals("关济民", r.getReviewer());
+		assertEquals("任秋颖", r.getIssuer());
+		assertEquals("玖拾柒元叁角叁分", r.getTotalAmountUpper());
+		assertEquals("￥97.33", r.getTotalAmountLower());
+		assertNotNull(r.getItems());
+		assertEquals(1, r.getItems().size());
+		InvoiceItem it = r.getItems().get(0);
+		assertEquals("94.50", it.getAmount());
+		assertEquals("3%", it.getTaxRate());
+		assertEquals("2.83", it.getTaxAmount());
+		assertNotNull(it.getGoodsName());
+		assertTrue(it.getGoodsName().contains("经营租赁"),
+			"goodsName 应含'经营租赁', 实际=" + it.getGoodsName());
+	}
+
+	/**
+	 * 从用户提供的 OCR 文本构造 67 个 {@link PPOcrV6Result}。
+	 * 框坐标格式:[(x0,y0),(x1,y1)] → 4 顶点 axis-aligned 矩形。
+	 */
+	private static List<PPOcrV6Result> buildTollFeeOcr() {
+		String[] lines = {
+			"text=\"河南增值\"  score=0.999169  box=[(286,25),(413,63)]",
+			"text=\"发票代码：041002000112\"  score=0.955184  box=[(641,27),(798,42)]",
+			"text=\"发票号码：53329252\"  score=0.998719  box=[(642,50),(768,65)]",
+			"text=\"通行费\"  score=0.999351  box=[(131,66),(211,93)]",
+			"text=\"\"  score=0.000000  box=[(403,64),(415,72)]",
+			"text=\"国作院方5-局\"  score=0.289549  box=[(420,68),(490,83)]",
+			"text=\"开票日期：2022年11月13日\"  score=0.981407  box=[(642,71),(801,86)]",
+			"text=\"河南省税务局\"  score=0.839479  box=[(423,87),(486,106)]",
+			"text=\"机器编号：499097952096\"  score=0.999048  box=[(31,97),(194,115)]",
+			"text=\"校验码：12301398404206110858\"  score=0.994422  box=[(641,92),(868,107)]",
+			"text=\"购\"  score=0.998940  box=[(36,128),(57,151)]",
+			"text=\"名\"  score=0.999774  box=[(69,122),(84,138)]",
+			"text=\"称：郑州约克计算机技术有限公司\"  score=0.993106  box=[(136,122),(336,137)]",
+			"text=\"03180*7<0>-639*>1>34+9228*4>\"  score=0.986908  box=[(546,124),(876,142)]",
+			"text=\"买方\"  score=0.996325  box=[(36,143),(57,198)]",
+			"text=\"纳税人识别号：91410105665970335G\"  score=0.995323  box=[(68,143),(300,161)]",
+			"text=\"密\"  score=0.668357  box=[(521,134),(532,151)]",
+			"text=\"码\"  score=0.746846  box=[(520,153),(534,173)]",
+			"text=\"492+2*091*/*<0-21994/*>31<67\"  score=0.963237  box=[(545,146),(875,164)]",
+			"text=\"地址、电话：郑州市北环路116号中方园小区西区1号楼东1单元3层B室13838153773\"  score=0.971132  box=[(68,165),(481,185)]",
+			"text=\"区\"  score=0.999079  box=[(520,176),(534,195)]",
+			"text=\"265-68<5*<+-<0**+221*<11-+68\"  score=0.990307  box=[(545,167),(875,185)]",
+			"text=\"开户行及账号：浦发银行经三支行66376130154800000547\"  score=0.985704  box=[(69,188),(411,206)]",
+			"text=\"5>916*<61*01*-141922<70*1-3>\"  score=0.929794  box=[(544,188),(876,206)]",
+			"text=\"项目名称\"  score=0.998872  box=[(97,215),(153,231)]",
+			"text=\"车牌号\"  score=0.938037  box=[(266,215),(307,232)]",
+			"text=\"类型\"  score=0.991976  box=[(369,215),(400,232)]",
+			"text=\"通行日期起\"  score=0.997254  box=[(417,215),(487,231)]",
+			"text=\"通行日期止\"  score=0.991027  box=[(501,215),(571,231)]",
+			"text=\"金额\"  score=0.990914  box=[(617,215),(662,232)]",
+			"text=\"税率\"  score=0.994632  box=[(710,214),(744,232)]",
+			"text=\"税额\"  score=0.996450  box=[(786,215),(832,232)]",
+			"text=\"*经营租赁*通行费\"  score=0.957663  box=[(33,233),(142,253)]",
+			"text=\"豫HL7223\"  score=0.948611  box=[(218,233),(279,253)]",
+			"text=\"货车\"  score=0.998190  box=[(367,232),(401,254)]",
+			"text=\"20220210\"  score=0.988788  box=[(418,233),(485,253)]",
+			"text=\"20220211\"  score=0.995916  box=[(505,234),(570,251)]",
+			"text=\"94.50\"  score=0.999883  box=[(662,232),(704,253)]",
+			"text=\"3%\"  score=0.998936  box=[(724,231),(754,254)]",
+			"text=\"2.83\"  score=0.999940  box=[(845,231),(883,254)]",
+			"text=\"合\"  score=0.896146  box=[(95,380),(111,396)]",
+			"text=\"计\"  score=0.999518  box=[(143,379),(160,396)]",
+			"text=\"￥94.50\"  score=0.981871  box=[(651,378),(705,397)]",
+			"text=\"￥2.83\"  score=0.984229  box=[(835,378),(883,398)]",
+			"text=\"价税合计（大写)\"  score=0.940867  box=[(76,406),(182,422)]",
+			"text=\"玖拾柒元叁角叁分\"  score=0.939852  box=[(219,406),(346,422)]",
+			"text=\"(小写)\"  score=0.945757  box=[(685,406),(735,422)]",
+			"text=\"￥97.33\"  score=0.959740  box=[(742,406),(793,422)]",
+			"text=\"名\"  score=0.999970  box=[(68,435),(85,452)]",
+			"text=\"称：河南交通投资集团有限公司\"  score=0.994846  box=[(136,435),(319,453)]",
+			"text=\"汇总开具\"  score=0.999928  box=[(540,434),(601,454)]",
+			"text=\"销\"  score=0.824987  box=[(37,445),(54,464)]",
+			"text=\"纳税人识别号：91410000693505019R\"  score=0.991740  box=[(67,454),(299,475)]",
+			"text=\"备\"  score=0.730131  box=[(519,448),(535,467)]",
+			"text=\"售\"  score=0.911221  box=[(36,459),(54,488)]",
+			"text=\"地址、电话：河南省郑州市郑东新区金水东路26号0371-87165330\"  score=0.962485  box=[(67,475),(463,495)]",
+			"text=\"方\"  score=0.505874  box=[(35,487),(55,509)]",
+			"text=\"开户行及账号：中国工商银行股份有限公司郑州商都路支行1702022809200058895\"  score=0.987739  box=[(68,495),(502,513)]",
+			"text=\"注\"  score=0.862311  box=[(519,487),(535,503)]",
+			"text=\"南\"  score=0.993496  box=[(716,496),(737,516)]",
+			"text=\"交\"  score=0.990029  box=[(721,490),(748,488)]",
+			"text=\"9141000693505019R\"  score=0.993894  box=[(737,504),(850,523)]",
+			"text=\"收款人：朱晓珂\"  score=0.983252  box=[(43,521),(158,538)]",
+			"text=\"复核：关济民\"  score=0.961283  box=[(293,521),(385,538)]",
+			"text=\"开票人：任秋颖\"  score=0.963243  box=[(470,520),(588,541)]",
+			"text=\"销售方\"  score=0.998427  box=[(654,520),(713,540)]",
+			"text=\"发票专用章\"  score=0.999321  box=[(743,522),(841,549)]"
+		};
+		Pattern p = Pattern.compile(
+			"text=\"((?:[^\"\\\\]|\\\\.)*)\"\\s+score=([0-9.]+)\\s+box=\\[\\((\\d+),(\\d+)\\),\\((\\d+),(\\d+)\\)\\]");
+		List<PPOcrV6Result> list = new ArrayList<>();
+		for (String line : lines) {
+			Matcher m = p.matcher(line);
+			if (!m.find()) {
+				throw new IllegalArgumentException("OCR 行解析失败: " + line);
+			}
+			String text = m.group(1)
+				.replace("\\\"", "\"").replace("\\\\", "\\")
+				.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
+			float score = Float.parseFloat(m.group(2));
+			int x0 = Integer.parseInt(m.group(3));
+			int y0 = Integer.parseInt(m.group(4));
+			int x1 = Integer.parseInt(m.group(5));
+			int y1 = Integer.parseInt(m.group(6));
+			int[][] box = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+			list.add(new PPOcrV6Result(text, score, box));
+		}
+		return list;
+	}
 }
