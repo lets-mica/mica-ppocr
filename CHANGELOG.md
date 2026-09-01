@@ -2,11 +2,10 @@
 
 ## 发行版本
 
-### 未发布
-- feat(structured): 发票明细改为行聚类结构化解析（表头定列 → y 行聚类 → x 列分配 → 行级过滤），新增 `InvoiceTableParser` 公共解析器与 `InvoiceItem` 明细行对象，`InvoiceResult` 新增 `List<InvoiceItem> items`（列对齐正确，两版发票共用；含项目名称/单价/数量/金额/税率/税额）。**破坏性变更**：移除历史多行字符串字段 `goodsName/amount/taxRate/taxAmount`（1.2.0 已随 `InvoiceParser` 改名破坏性升级，调用方改取 `getItems()` 逐行取值）。测试：老版 5 样本断言 items 行数/字段，电子版端到端断言 2 行明细（含负数金额），全部回归通过。
-- feat(structured): 发票解析统一入口 + 支持新版电子发票（数电票）。新增 `InvoiceParser` 分发器（继承 BaseStructuredParser，5 种入参一站式复用），自动判别新版/老版：先按"发票号码固定 20 位"（国家税务总局公告 2024 年第 11 号）命中 `ElectronicInvoiceParser`，判别失败回退老版 `VatInvoiceParser`（原 InvoiceParser 改名，纯字段解析不依赖引擎），最终统一标注 `InvoiceVersion`（ELECTRONIC / VAT）到 `InvoiceResult#getVersion()`；`InvoiceResult` 新增 `version`、`remark` 字段。新版解析器覆盖顶部号码/日期、购销双方（左右列按 x 排序）、明细表（header + x 容差 + 紧凑行拼接）、价税合计（锚定"价税合计"标签取大写/小写，OCR 误识 `?` 归一化为 `¥`）、备注与底栏字段；子解析器在分发器构造时内部初始化，Spring Boot Starter 与 Solon 插件仅注册 invoiceParser 单一 bean，调用方无感知。测试：5 张老版样本改走分发器端到端回归（断言 version=VAT）+ 电子版专项用例（判别失败/空输入/端到端）。
-- fix(structured): 修复发票解析器地址电话/开户行账号多框拼接与发票号码解析：
-  新增 `matchRightJoinByCenter` 按 x 连续性拼接相邻框（gap ≤ 60），以「与起点框严格垂直重叠 + 左缘窗口约束」双重判定防止斜框贴边误吞上下行字段（如发票号码吞税号、地址吞开户行）；重写 `parseInvoiceNo`：仅当完整「发票号码」标签存在时才走标签匹配（fragment 单字标签如"码"不可信，会命中密码区噪音），支持 `No`/`N0`/`Ne` 前缀框剥前缀抽数字、`\d{8,}` 连续数字串免疫密码区噪音（`+29<65>6...`）、号码与发票代码粘连时剥离代码后缀，不足 8 位向右拼接同行数字框；发票代码/日期解析同步收敛。测试覆盖 5 张真实发票 OCR JSON 样本，200 个测试全绿。
+### v1.2.1 - 2026-09-01
+- feat(structured): 优化行驶证结构化解析。
+- feat(structured): 发票解析统一入口 + 支持新版电子发票（数电票）。
+- fix(structured): 修复发票解析器地址电话/开户行账号多框拼接与发票号码解析。
 
 ### v1.2.0 - 2026-08-27
 - fix(core): 修复动态分辨率下内存持续增长（github #14 根治）：新增 `enableCpuMemArena`（默认 false）、`enableMemoryPattern`（默认 false）配置，关闭 ONNX Runtime CPU arena / 内存模式优化，临时内存用完即释放，Docker 等内存受限环境不再 OOM；新增 `execMode` 配置（sequential / parallel）暴露 ORT 执行模式。Spring Boot Starter 与 Solon 插件同步暴露三个配置项。

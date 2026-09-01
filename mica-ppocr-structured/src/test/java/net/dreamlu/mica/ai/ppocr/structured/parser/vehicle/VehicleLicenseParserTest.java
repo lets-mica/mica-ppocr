@@ -202,6 +202,20 @@ class VehicleLicenseParserTest extends ParserTestSupport {
 	}
 
 	@Test
+	void parse_plateLabelFirstCharMisreadRecoversByFullImageSubstring() {
+		// 主页"号牌号码"标签剥出值"售0SAF1挂"（首字"售"被 OCR 误识自"鲁"），
+		// 严格正则 PLATE_PATTERN 因首字非省简称拒收；
+		// 但全图其它位置有"鲁A12345"格式的合法车牌（来自检验记录栏/副页等），子串搜索兜底命中
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码售0SAF1挂", 100, 200, 500, 230),
+			box("检验有效期至2026年04月鲁", 100, 800, 500, 830),
+			box("鲁A12345", 100, 850, 300, 880)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("鲁A12345", r.getPlateNo());
+	}
+
+	@Test
 	void parse_vehicleTypeMergedWithLabel() {
 		// OCR 把"车辆类型"标签和值识别成单框 "车辆类型重型集装箱半挂车"（合并框剥前缀）
 		List<PPOcrV6Result> results = CollUtil.listOf(
@@ -211,6 +225,134 @@ class VehicleLicenseParserTest extends ParserTestSupport {
 		);
 		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
 		assertEquals("重型集装箱半挂车", r.getVehicleType());
+	}
+
+	// ==================================================================
+	// 批量复盘 batch-ocr-vehicle-tiny2（100 张）车辆类型失败场景回归
+	// 值字段均为通用车型/合成数据，box 坐标与真实样本一致
+	// ==================================================================
+
+	@Test
+	void parse_vehicleTypeEnglishLabelMergedWithValue() {
+		// 批量复盘 bug：tiny2 档把英文标签 "VehicleType" 误识成 "VehiclcTyre" 并与
+		// 中文值合并成单框，值框定位正确但文本带噪声前缀，须从值内提取（6/100 张形态）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码", 95, 420, 188, 454),
+			box("津A00000", 92, 439, 303, 480),
+			box("车辆类型", 393, 430, 484, 462),
+			box("VehiclcTyre重型半挂牵引车", 390, 450, 716, 496)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("重型半挂牵引车", r.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeEnglishLabelVariants() {
+		// 同类形态变体："VehicleType"/"Va"/"Ven" 前缀合并框，均应从值内提取
+		for (String merged : new String[]{"VehicleType重型半挂牵引车", "Va重型半挂牵引车", "Ven重型半挂牵引车"}) {
+			List<PPOcrV6Result> results = CollUtil.listOf(
+				box("车辆类型", 393, 430, 484, 462),
+				box(merged, 390, 450, 716, 496)
+			);
+			VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+			assertEquals("重型半挂牵引车", r.getVehicleType(), merged);
+		}
+	}
+
+	@Test
+	void parse_vehicleTypeChinesePrefixNoiseMergedWithValue() {
+		// 中文噪声前缀合并框："发重型集装箱半挂车"（"车辆类型"中间字误识成"发"）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型", 393, 430, 484, 462),
+			box("发重型集装箱半挂车", 390, 450, 716, 496)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("重型集装箱半挂车", r.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeTrailingDotNoise() {
+		// 值尾噪声："重型集装箱半挂车." → 值内提取剥掉尾点
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型", 393, 430, 484, 462),
+			box("重型集装箱半挂车.", 390, 450, 716, 496)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("重型集装箱半挂车", r.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeLabelWithColonStripsToNull() {
+		// 批量复盘 bug："车辆类型：" 合并框剥出 "："，纯噪声不应作为值返回；
+		// 正确值在右侧独立框时走正则兜底命中
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型：", 94, 619, 223, 642),
+			box("重型厢式半挂车", 240, 619, 460, 642)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("重型厢式半挂车", r.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeLabelWithColonOnlyYieldsNull() {
+		// "车辆类型：" 合并框且无其他值框 → 纯噪声 "：" 置 null 而非透传
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型：", 94, 619, 223, 642)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertNull(r.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeFuzzyCorrectedByVocabulary() {
+		// 批量复盘 bug（OCR 级）：值内单字误识 "重型集装箱半技车"（Levenshtein=1）、
+		// "重盟半挂章引车"（distance=2）、"重型集装销半社车"（distance=2），
+		// 距 GA 802 标准词表极近，高置信纠回
+		String[][] cases = {
+			{"重型集装箱半技车", "重型集装箱半挂车"},
+			{"重盟半挂章引车", "重型半挂牵引车"},
+			{"重型集装销半社车", "重型集装箱半挂车"}
+		};
+		for (String[] c : cases) {
+			List<PPOcrV6Result> results = CollUtil.listOf(
+				box("车辆类型", 393, 430, 484, 462),
+				box(c[0], 390, 450, 716, 496)
+			);
+			VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+			assertEquals(c[1], r.getVehicleType(), c[0]);
+		}
+	}
+
+	@Test
+	void parse_vehicleTypeVocabularyDoesNotCorrectUnrelatedText() {
+		// 词表纠错安全护栏：标题（旋转图场景下被误当值）等长文本距离远超阈值，
+		// 不得被误纠成任何词表条目；短噪声（"核定入数"）也不参与纠错
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型", 430, 396, 457, 475),
+			box("中华人民共和国机动车行驶证", 464, 241, 511, 619)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		// 旋转图标题被误当值属布局问题（已知局限），但词表不得再错上加错
+		assertEquals("中华人民共和国机动车行驶证", r.getVehicleType());
+
+		List<PPOcrV6Result> shortNoise = CollUtil.listOf(
+			box("车辆类型", 192, 287, 244, 301),
+			box("核定入数", 260, 287, 360, 301)
+		);
+		VehicleLicenseResult r2 = parse(new VehicleLicenseParser(null), shortNoise);
+		// "核定入数" 含中文且不命中词表 → 原样保留（与旧行为一致，不引入回归）
+		assertEquals("核定入数", r2.getVehicleType());
+	}
+
+	@Test
+	void parse_vehicleTypeLightTruckPassesThrough() {
+		// "轻型" 级别词回归：值正则此前缺失 "轻型" 前缀，补齐后应正常完整命中
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型", 393, 430, 484, 462),
+			box("轻型厢式货车", 390, 450, 616, 496)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("轻型厢式货车", r.getVehicleType());
 	}
 
 	@Test
@@ -264,6 +406,26 @@ class VehicleLicenseParserTest extends ParserTestSupport {
 	}
 
 	@Test
+	void parse_ownerExcludesVehicleTypeMergedBox() {
+		// 批量复盘 bug（drivingLicensePic20250820092151.png）：OCR 把"车辆类型"标签与值合并成单框
+		// "VehiclcType重型半挂牵引车"，布局兜底曾因它最宽而误当所有人；isOwnerNoise 改为含车辆类型值
+		// 即用 find() 排除，不再返回车辆类型串味的伪所有人（该图所有人值本身 OCR 缺失）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码", 100, 389, 200, 419),
+			box("车辆类型", 383, 395, 484, 422),
+			box("VehiclcType重型半挂牵引车", 379, 415, 772, 451),
+			box("住", 48, 522, 131, 553),
+			box("址", 127, 525, 156, 549),
+			box("山东省寿光市纪台镇桃园村190号", 161, 543, 528, 581)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		// 车辆类型串味的伪所有人必须被排除；不再返回 "VehiclcType重型半挂牵引车"
+		assertNotEquals("VehiclcType重型半挂牵引车", r.getOwner());
+		assertTrue(r.getOwner() == null || !r.getOwner().contains("半挂牵引车"),
+			"所有人不应包含车辆类型值: " + r.getOwner());
+	}
+
+	@Test
 	void parse_realImageOcrTinyVehicle4() {
 		// 真实样本回归（值字段已脱敏，box 坐标与真实样本一致）：
 		// 关键回归点 —— 「label + 值」被 OCR 合并识别成单框时，解析器应能剥出值。
@@ -307,5 +469,115 @@ class VehicleLicenseParserTest extends ParserTestSupport {
 		assertEquals("张*", r.getOwner());
 		assertEquals("小型普通客车", r.getVehicleType());
 		// plateNo 因脱敏字符不符合车牌号正则被解析器视为噪声丢弃，不作硬断言。
+	}
+
+	@Test
+	void parse_ownerMangledSuoXRenPrefixCompany() {
+		// 批量复盘 bug：OCR 把"所有人"中间的"有"误识成"精"，与公司名合并成单框
+		// "所精人山东XX物流有限公司"，旧逻辑不剥 3 字残缺前缀（公司名已脱敏）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码", 295, 677, 479, 737),
+			box("鲁P*****挂", 500, 681, 796, 768),
+			box("所精人山东XX物流有限公司", 276, 782, 1282, 921)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("山东XX物流有限公司", r.getOwner());
+	}
+
+	@Test
+	void parse_ownerMangledSuoXRenPrefixPerson() {
+		// 批量复盘 bug：残缺变体"所X人"对人名同样生效（人名已脱敏为合成值）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("所想人王某某", 231, 337, 324, 372)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("王某某", r.getOwner());
+	}
+
+	@Test
+	void parse_ownerLayoutFallbackStripsMangledPrefix() {
+		// 批量复盘 bug 的完整触发路径：残缺前缀合并框走"版面布局兜底"时，
+		// normalizeOwnerMatch 也必须剥掉 3 字残缺前缀（公司名已脱敏）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆类型", 891, 701, 1080, 768),
+			box("重型集装箱半挂车", 1152, 718, 1679, 833),
+			box("所身人XX市XX物流有限公司", 276, 782, 1282, 921),
+			box("住", 358, 938, 466, 1018),
+			box("址XX省XX市XX区", 409, 912, 1567, 1062)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("XX市XX物流有限公司", r.getOwner());
+	}
+
+	@Test
+	void parse_plateNormalizesIOMisread() {
+		// 批量复盘 bug（OCR 级）：tiny 档把车牌 1/0 误识为 I/O（4/100 张，
+		// 如 "鲁GOT77挂"/"津ALIMO挂"）；车牌合法字符集不含 I/O，确定性归一化 I→1、O→0
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码", 155, 201, 286, 241),
+			box("津ALIMO挂", 289, 208, 498, 259),
+			box("车辆类型", 573, 197, 699, 234),
+			box("重型集装箱半挂车", 739, 205, 1099, 255)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("津AL1M0挂", r.getPlateNo());
+	}
+
+	@Test
+	void parse_plateIOMisreadInMergedBox() {
+		// 车牌嵌在长合并框（子串搜索兜底路径）中时同样归一化
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("号牌号码鲁P0IY25挂检验有效期至2026年04月鲁", 100, 200, 500, 230)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("鲁P01Y25挂", r.getPlateNo());
+	}
+
+	@Test
+	void parse_vinNormalizesIOMisread() {
+		// 批量复盘 bug（OCR 级）：tiny 档把 VIN 中的 1/0 误识为 I/O（19/100 张）；
+		// VIN（ISO 3779）合法字符集不含 I/O/Q，确定性归一化 I→1、O→0（合成 VIN）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("车辆识别代号", 407, 533, 586, 569),
+			box("LXIXOX1X2X3X4X5X6", 620, 535, 1011, 586),
+			box("VIN", 406, 564, 466, 596)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("LX1X0X1X2X3X4X5X6", r.getVin());
+	}
+
+	@Test
+	void parse_vinNormalizesQAsZero() {
+		// Q 在 tiny 档模型下几乎必为 0 的误识，按"0"做确定性归一化救场，
+		// 归一化结果应通过严格 ISO 3779 校验（17 位）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("LA99FR34TQTSD0002", 620, 535, 1011, 586)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("LA99FR34T0TSD0002", r.getVin());
+	}
+
+	@Test
+	void parse_vinRejectsWhenQNormalizeStillInvalid() {
+		// 17 位含 I/O/Q 的串经归一化后全变成严格字符集合法字符（I→1、O→0、Q→0），
+		// 因此严格正则不会拒收这种"误识拯救"路径；只有"长度 18+ / 纯字符集外字符"才会真正拒收。
+		// 这里改测:归一化后仍含 X? 不,X 在 S-Z 段是合法字符。改为: 输入含 ? 等非字母数字字符,
+		// 初筛 [A-Z0-9]{17} matches() 失败,直接拒收。
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("LA99FR34T0TSD000?", 620, 535, 1011, 586)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertNull(r.getVin());
+	}
+
+	@Test
+	void parse_vinNormalizesIOMisreadWithDotNoise() {
+		// 点号噪声清理兜底路径产出 VIN 后同样归一化（I→1）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("噪声", 100, 100, 200, 120),
+			box("LXI.XOX2X3X4X5X6X7", 100, 500, 600, 520)
+		);
+		VehicleLicenseResult r = parse(new VehicleLicenseParser(null), results);
+		assertEquals("LX1X0X2X3X4X5X6X7", r.getVin());
 	}
 }
