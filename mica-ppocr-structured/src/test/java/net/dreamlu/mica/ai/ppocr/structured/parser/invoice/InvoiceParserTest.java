@@ -361,6 +361,115 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("钟寒冰", r.getIssuer());
 	}
 
+	/**
+	 * 数电票（旅客运输服务）：金额表头残缺为单字 "金"（无 "额" fragment）。
+	 *
+	 * <p>修复前 findColumnHeader step 4 只匹配后缀 "额"，"金" 是前缀不匹配 →
+	 * 金额列整列丢失 → 24.49 / -3.33 落入税率列范围但不匹配税率 pattern → 金额 null。
+	 * 修复后 step 4 同时接受前缀匹配，"金" → 金额列表头，金额正确解析。
+	 */
+	@Test
+	void parse_electronic_invoice_amountFragmentPrefix() {
+		List<PPOcrV6Result> results = buildElectronicInvoiceOcr();
+		InvoiceResult r = PARSER.parseResults(results);
+		assertNotNull(r);
+		assertEquals(InvoiceVersion.ELECTRONIC, r.getVersion());
+		assertEquals("26347000000187619471", r.getInvoiceNo());
+		assertEquals("2026年07月28日", r.getInvoiceDate());
+		assertEquals("合肥皖域信息科技有限公司", r.getBuyerName());
+		assertEquals("913401000723997351", r.getBuyerTaxNo());
+		assertEquals("合肥吉利优行科技有限公司", r.getSellerName());
+		assertEquals("91340100MA2MRTW78F", r.getSellerTaxNo());
+		// 明细（金额表头残缺为 "金"，值在金额/税率列重叠区）
+		assertNotNull(r.getItems());
+		assertEquals(2, r.getItems().size());
+		InvoiceItem row0 = r.getItems().get(0);
+		assertEquals("交通运输服务*客运服务费", row0.getGoodsName());
+		assertEquals("24.49", row0.getAmount());
+		assertEquals("3%", row0.getTaxRate());
+		assertEquals("0.73", row0.getTaxAmount());
+		InvoiceItem row1 = r.getItems().get(1);
+		assertEquals("交通运输服务*客运服务费", row1.getGoodsName());
+		assertEquals("-3.33", row1.getAmount());
+		assertEquals("3%", row1.getTaxRate());
+		assertEquals("-0.10", row1.getTaxAmount());
+		// 价税合计
+		assertEquals("贰拾壹圆柒角玖分", r.getTotalAmountUpper());
+		assertEquals("¥21.79", r.getTotalAmountLower());
+		// 底栏
+		assertEquals("钟寒冰", r.getIssuer());
+	}
+
+	private static List<PPOcrV6Result> buildElectronicInvoiceOcr() {
+		String[] lines = {
+			"text=\"电子发晨(音通\"  score=0.698850  box=[(295,30),(513,73)]",
+			"text=\"发票）\"  score=0.857711  box=[(500,31),(585,69)]",
+			"text=\"发票号码：26347000000187619471\"  score=0.968474  box=[(660,44),(871,59)]",
+			"text=\"旅客运输服务\"  score=0.997250  box=[(142,58),(224,74)]",
+			"text=\"开票日期：2026年07月28日\"  score=0.998373  box=[(658,69),(831,87)]",
+			"text=\"安徽有税务的\"  score=0.655170  box=[(413,90),(489,110)]",
+			"text=\"购买方信息\"  score=0.997860  box=[(21,130),(43,216)]",
+			"text=\"名称：合肥皖域信息科技有限公司\"  score=0.994116  box=[(48,136),(242,150)]",
+			"text=\"銷售方信息\"  score=0.993957  box=[(451,131),(472,217)]",
+			"text=\"名称：合肥吉利优行科技有限公司\"  score=0.981138  box=[(478,136),(673,150)]",
+			"text=\"统一社会信用代码/纳税人识别号：913401000723997351\"  score=0.976740  box=[(47,193),(411,208)]",
+			"text=\"统一社会信用代码/纳税人识别号：91340100MA2MRTW78F\"  score=0.990431  box=[(475,192),(845,208)]",
+			"text=\"项目名称\"  score=0.998479  box=[(113,223),(172,238)]",
+			"text=\"单价\"  score=0.999799  box=[(376,220),(409,241)]",
+			"text=\"数量\"  score=0.992006  box=[(504,220),(538,242)]",
+			"text=\"金\"  score=0.969826  box=[(615,222),(649,240)]",
+			"text=\"税率/征收率\"  score=0.999717  box=[(662,223),(741,239)]",
+			"text=\"税额\"  score=0.856615  box=[(845,220),(879,241)]",
+			"text=\"交通运输服务*客运服务费\"  score=0.927945  box=[(20,240),(181,255)]",
+			"text=\"24.485437\"  score=0.999180  box=[(342,239),(410,257)]",
+			"text=\"1\"  score=0.998791  box=[(525,241),(537,255)]",
+			"text=\"24.49\"  score=0.999931  box=[(608,238),(650,258)]",
+			"text=\"3%\"  score=0.999954  box=[(694,240),(712,257)]",
+			"text=\"0.73\"  score=0.937672  box=[(844,237),(880,259)]",
+			"text=\"交通运输服务*客运服务费\"  score=0.989175  box=[(20,258),(182,275)]",
+			"text=\"-3.33\"  score=0.994756  box=[(607,257),(650,277)]",
+			"text=\"3%\"  score=0.999853  box=[(692,257),(714,277)]",
+			"text=\"-0.10\"  score=0.988283  box=[(839,258),(881,276)]",
+			"text=\"合\"  score=0.976046  box=[(90,294),(110,314)]",
+			"text=\"计\"  score=0.999416  box=[(162,294),(179,312)]",
+			"text=\"¥21.16\"  score=0.984282  box=[(602,293),(659,316)]",
+			"text=\"¥0.63\"  score=0.962306  box=[(829,294),(877,314)]",
+			"text=\"出行人\"  score=0.998541  box=[(36,315),(83,334)]",
+			"text=\"有效身份证件号\"  score=0.999904  box=[(137,317),(232,332)]",
+			"text=\"出行日期\"  score=0.999031  box=[(290,316),(350,334)]",
+			"text=\"出发地\"  score=0.998149  box=[(430,315),(478,334)]",
+			"text=\"到达地\"  score=0.998833  box=[(593,315),(640,334)]",
+			"text=\"等级\"  score=0.999824  box=[(717,316),(749,333)]",
+			"text=\"交通工具类型\"  score=0.979736  box=[(779,317),(862,332)]",
+			"text=\"价税合计（大写)\"  score=0.905461  box=[(80,416),(181,432)]",
+			"text=\"贰拾壹圆柒角玖分\"  score=0.994728  box=[(253,412),(407,433)]",
+			"text=\"(小写)¥21.79\"  score=0.958524  box=[(621,414),(722,433)]",
+			"text=\"备\"  score=0.877858  box=[(20,448),(44,466)]",
+			"text=\"注\"  score=0.999699  box=[(22,482),(42,502)]",
+			"text=\"开票人：钟寒冰\"  score=0.980739  box=[(80,545),(172,561)]"
+		};
+		Pattern p = Pattern.compile(
+			"text=\"((?:[^\"\\\\]|\\\\.)*)\"\\s+score=([0-9.]+)\\s+box=\\[\\((\\d+),(\\d+)\\),\\((\\d+),(\\d+)\\)\\]");
+		List<PPOcrV6Result> list = new ArrayList<>();
+		for (String line : lines) {
+			Matcher m = p.matcher(line);
+			if (!m.find()) {
+				throw new IllegalArgumentException("OCR 行解析失败: " + line);
+			}
+			String text = m.group(1)
+				.replace("\\\"", "\"").replace("\\\\", "\\")
+				.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
+			float score = Float.parseFloat(m.group(2));
+			int x0 = Integer.parseInt(m.group(3));
+			int y0 = Integer.parseInt(m.group(4));
+			int x1 = Integer.parseInt(m.group(5));
+			int y1 = Integer.parseInt(m.group(6));
+			int[][] box = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+			list.add(new PPOcrV6Result(text, score, box));
+		}
+		return list;
+	}
+
 	// ========================================================================
 	// 诊断：直接调 VatInvoiceParser 跑通行费发票 OCR 数据
 	// ========================================================================
@@ -569,6 +678,134 @@ class InvoiceParserTest extends ParserTestSupport {
 			"text=\"开票人：任秋颖\"  score=0.963243  box=[(470,520),(588,541)]",
 			"text=\"销售方\"  score=0.998427  box=[(654,520),(713,540)]",
 			"text=\"发票专用章\"  score=0.999321  box=[(743,522),(841,549)]"
+		};
+		Pattern p = Pattern.compile(
+			"text=\"((?:[^\"\\\\]|\\\\.)*)\"\\s+score=([0-9.]+)\\s+box=\\[\\((\\d+),(\\d+)\\),\\((\\d+),(\\d+)\\)\\]");
+		List<PPOcrV6Result> list = new ArrayList<>();
+		for (String line : lines) {
+			Matcher m = p.matcher(line);
+			if (!m.find()) {
+				throw new IllegalArgumentException("OCR 行解析失败: " + line);
+			}
+			String text = m.group(1)
+				.replace("\\\"", "\"").replace("\\\\", "\\")
+				.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
+			float score = Float.parseFloat(m.group(2));
+			int x0 = Integer.parseInt(m.group(3));
+			int y0 = Integer.parseInt(m.group(4));
+			int x1 = Integer.parseInt(m.group(5));
+			int y1 = Integer.parseInt(m.group(6));
+			int[][] box = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+			list.add(new PPOcrV6Result(text, score, box));
+		}
+		return list;
+	}
+
+	/**
+	 * 河南增值税普通发票（飞利浦剃须刀）。
+	 *
+	 * <p>关键场景：明细行金额"123.01"的 x 中心(706)落入金额列 [607,714]
+	 * 与税率列 [697,792] 的重叠区。修复前 isNearestColumn 按几何距离
+	 * 将其误归到税率列（更近），但"123.01"不匹配税率 pattern（无 %）→
+	 * extractCell 返回 null → 金额丢失。
+	 */
+	@Test
+	void parse_henanVatInvoice_amountInOverlapZone() {
+		List<PPOcrV6Result> results = buildHenanVatOcr();
+		InvoiceResult r = PARSER.parseResults(results);
+		assertNotNull(r);
+		assertEquals(InvoiceVersion.VAT, r.getVersion());
+		// 顶部
+		assertEquals("041002200211", r.getInvoiceCode());
+		assertEquals("24867153", r.getInvoiceNo());
+		assertEquals("2022年12月06日", r.getInvoiceDate());
+		// 购方
+		assertEquals("郑州约克计算机技术有限公司", r.getBuyerName());
+		assertEquals("91410105665970335G", r.getBuyerTaxNo());
+		// 销方
+		assertEquals("河南世纪联华超市有限公司", r.getSellerName());
+		assertEquals("91410100744070589Y", r.getSellerTaxNo());
+		assertEquals("郑州市金水区经三路68号1号楼5层0371-658610620371-65861062", r.getSellerAddressPhone());
+		assertEquals("招商银行郑州东风路支行371902422710102", r.getSellerBankAccount());
+		// 明细（金额在金额/税率列重叠区，必须正确归到金额列）
+		assertNotNull(r.getItems());
+		assertEquals(1, r.getItems().size());
+		InvoiceItem item = r.getItems().get(0);
+		assertNotNull(item.getGoodsName());
+		assertTrue(item.getGoodsName().contains("飞利浦剃须刀"));
+		assertEquals("123.01", item.getAmount());
+		assertEquals("13%", item.getTaxRate());
+		assertEquals("15.99", item.getTaxAmount());
+		// 合计
+		assertEquals("壹佰叁拾玖圆整", r.getTotalAmountUpper());
+		assertEquals("¥139.00", r.getTotalAmountLower());
+		// 底栏
+		assertEquals("李明丽", r.getPayee());
+		assertEquals("齐艳民", r.getReviewer());
+		assertEquals("韩艳红", r.getIssuer());
+	}
+
+	private static List<PPOcrV6Result> buildHenanVatOcr() {
+		String[] lines = {
+			"text=\"发票代码：041002200211\"  score=0.971259  box=[(658,15),(794,29)]",
+			"text=\"河南增值電\"  score=0.883697  box=[(296,25),(518,73)]",
+			"text=\"普通发票\"  score=0.966819  box=[(504,25),(637,73)]",
+			"text=\"发票号码:24867153\"  score=0.966150  box=[(656,42),(770,57)]",
+			"text=\"日家科务馬局\"  score=0.447162  box=[(423,68),(499,83)]",
+			"text=\"*\"  score=0.429490  box=[(506,69),(518,76)]",
+			"text=\"开票日期：2022年12月06日\"  score=0.994740  box=[(656,68),(832,82)]",
+			"text=\"机器编号：661616199301\"  score=0.999123  box=[(46,94),(190,108)]",
+			"text=\"河南省税务局\"  score=0.917756  box=[(428,92),(494,111)]",
+			"text=\"校验码:57915131911755844768\"  score=0.930958  box=[(656,94),(863,109)]",
+			"text=\"购买方\"  score=0.828749  box=[(36,134),(65,204)]",
+			"text=\"名\"  score=0.999964  box=[(70,126),(88,143)]",
+			"text=\"称：郑州约克计算机技术有限公司\"  score=0.996937  box=[(141,128),(339,143)]",
+			"text=\"密\"  score=0.999899  box=[(529,129),(548,151)]",
+			"text=\"468<>5813463829*02/+*30+0-1\"  score=0.992859  box=[(577,128),(869,143)]",
+			"text=\"纳税人识别号：91410105665970335G\"  score=0.977695  box=[(70,149),(360,167)]",
+			"text=\"码\"  score=0.999423  box=[(530,157),(549,180)]",
+			"text=\"3>84*+1-6/0055+7288*87+08-7\"  score=0.994720  box=[(576,150),(870,168)]",
+			"text=\"地址、电话：\"  score=0.968846  box=[(71,174),(160,189)]",
+			"text=\"4505-2*>7334*66<829-43/+*45\"  score=0.989738  box=[(577,174),(870,189)]",
+			"text=\"区\"  score=0.999945  box=[(530,186),(550,208)]",
+			"text=\"开户行及账号：\"  score=0.998172  box=[(71,196),(161,212)]",
+			"text=\"+2-9+/+5827<7>4026+7<8/+18<\"  score=0.999266  box=[(575,195),(872,213)]",
+			"text=\"货物或应税劳务、服务名称\"  score=0.994173  box=[(66,220),(231,234)]",
+			"text=\"规格型号\"  score=0.999866  box=[(268,217),(328,236)]",
+			"text=\"单位\"  score=0.999572  box=[(338,217),(373,237)]",
+			"text=\"数量\"  score=0.994642  box=[(412,217),(453,237)]",
+			"text=\"单价\"  score=0.999486  box=[(517,218),(556,237)]",
+			"text=\"金额\"  score=0.983757  box=[(637,219),(684,238)]",
+			"text=\"税率\"  score=0.927768  box=[(727,217),(762,237)]",
+			"text=\"税额\"  score=0.994457  box=[(807,219),(856,238)]",
+			"text=\"*家用美容保健电器*飞利浦剃须刀\"  score=0.955511  box=[(39,240),(243,255)]",
+			"text=\"PQ182\"  score=0.999175  box=[(266,239),(308,256)]",
+			"text=\"个\"  score=0.999414  box=[(348,237),(369,258)]",
+			"text=\"123.00884956\"  score=0.986291  box=[(516,240),(592,256)]",
+			"text=\"123.01\"  score=0.935905  box=[(686,239),(726,256)]",
+			"text=\"13%\"  score=0.999892  box=[(731,236),(762,258)]",
+			"text=\"15.99\"  score=0.968798  box=[(862,239),(895,257)]",
+			"text=\"合\"  score=0.973572  box=[(89,383),(109,403)]",
+			"text=\"计\"  score=0.999976  box=[(150,384),(168,401)]",
+			"text=\"¥123.01\"  score=0.956272  box=[(651,388),(724,404)]",
+			"text=\"¥15.99\"  score=0.943660  box=[(830,388),(893,404)]",
+			"text=\"价税合计(大写)\"  score=0.964716  box=[(92,414),(187,429)]",
+			"text=\"壹佰叁拾玖圆整\"  score=0.990913  box=[(268,412),(385,430)]",
+			"text=\"(小写)¥139.00\"  score=0.932214  box=[(680,414),(787,428)]",
+			"text=\"銷售方\"  score=0.921529  box=[(40,450),(63,514)]",
+			"text=\"名\"  score=0.999987  box=[(70,441),(87,459)]",
+			"text=\"称：河南世纪联华超市有限公司\"  score=0.991459  box=[(139,443),(324,458)]",
+			"text=\"备\"  score=0.999736  box=[(530,452),(546,471)]",
+			"text=\"纳税人识别号:91410100744070589Y\"  score=0.977960  box=[(70,465),(356,479)]",
+			"text=\"地址、电话：郑州市金水区经三路68号1号楼5层0371-658610620371-65861062\"  score=0.958286  box=[(70,486),(492,501)]",
+			"text=\"开户行及账号：招商银行郑州东风路支行371902422710102\"  score=0.984525  box=[(70,505),(410,522)]",
+			"text=\"注\"  score=0.999762  box=[(528,496),(548,516)]",
+			"text=\"阿91410100744070589Y\"  score=0.924382  box=[(730,505),(884,525)]",
+			"text=\"收款人:李明丽\"  score=0.928979  box=[(47,533),(140,552)]",
+			"text=\"复核：齐艳民\"  score=0.989830  box=[(290,535),(367,551)]",
+			"text=\"开票人：韩艳红\"  score=0.986418  box=[(474,535),(567,550)]",
+			"text=\"销售方：(章)\"  score=0.926249  box=[(658,534),(732,552)]",
+			"text=\"发票专用章\"  score=0.998935  box=[(765,530),(850,556)]"
 		};
 		Pattern p = Pattern.compile(
 			"text=\"((?:[^\"\\\\]|\\\\.)*)\"\\s+score=([0-9.]+)\\s+box=\\[\\((\\d+),(\\d+)\\),\\((\\d+),(\\d+)\\)\\]");

@@ -273,14 +273,15 @@ final class InvoiceTableParser {
 		// 3) fragment 按 x 拼接（如 "金"+"额"）
 		PPOcrV6Result joined = findFragmentHeaderBox(results, normalized);
 		if (joined != null) return joined;
-		// 4) 单字后缀降级（fragment 拼接失败时的最后兜底，如 "额" → "金额"）
+		// 4) 单字前缀/后缀降级（fragment 拼接失败时的最后兜底，如 "额" → "金额"，"金" → "金额"）
 		PPOcrV6Result best = null;
 		int bestOverlap = 0;
 		for (PPOcrV6Result r : results) {
 			String text = r.text().replaceAll("\\s+", "");
 			if (text.isEmpty() || text.length() > normalized.length()) continue;
 			String suffix = normalized.substring(normalized.length() - text.length());
-			if (suffix.equals(text) && text.length() > bestOverlap) {
+			String prefix = normalized.substring(0, text.length());
+			if ((suffix.equals(text) || prefix.equals(text)) && text.length() > bestOverlap) {
 				best = r;
 				bestOverlap = text.length();
 			}
@@ -376,11 +377,22 @@ final class InvoiceTableParser {
 	}
 
 	/**
-	 * 行内列分配：box x 中心落在列区间内，且是该框最近的列（避免宽容差列抢框）。
+	 * 行内列分配：box x 中心落在列区间内，且是该框最佳匹配列。
+	 *
+	 * <p>最佳匹配判定（pattern-aware）：
+	 * <ol>
+	 *   <li>box 文本匹配本列 pattern 但不匹配其它列 → 归本列（即使几何上不是最近）；
+	 *   <li>box 文本匹配其它列 pattern 但不匹配本列 → 不归本列；
+	 *   <li>两边都匹配或都不匹配 → 按几何距离选最近列。
+	 * </ol>
+	 *
+	 * <p>解决相邻数值列 tolerance 重叠区（如金额"123.01"中心落入金额列右缘 +
+	 * 税率列左缘的重叠区）被几何最近逻辑误归到税率列、但因不匹配税率 pattern
+	 * 被丢弃导致金额丢失的问题。
 	 *
 	 * @param row     当前行候选框
 	 * @param col     目标列
-	 * @param headers 全部表头（用于最近列判定）
+	 * @param headers 全部表头（用于最佳列判定）
 	 * @return 分配到的框（按 x 升序），无则空列表
 	 */
 	private static List<PPOcrV6Result> assignColumnCells(List<PPOcrV6Result> row,
@@ -394,21 +406,40 @@ final class InvoiceTableParser {
 		for (PPOcrV6Result box : row) {
 			int centerX = (LabelMatcher.minX(box) + LabelMatcher.maxX(box)) / 2;
 			if (centerX < colMinX || centerX > colMaxX) continue;
-			if (!isNearestColumn(centerX, col, headers, colCenter)) continue;
+			if (!isNearestColumn(centerX, col, headers, colCenter, box.text())) continue;
 			cells.add(box);
 		}
 		cells.sort(Comparator.comparingInt(LabelMatcher::minX));
 		return cells;
 	}
 
+	/**
+	 * 最佳列判定（pattern-aware）。
+	 *
+	 * @param centerX   box x 中心
+	 * @param col       当前列
+	 * @param headers   全部表头
+	 * @param colCenter 当前列中心 x
+	 * @param text      box 文本（用于 pattern 匹配）
+	 * @return true = 归当前列
+	 */
 	private static boolean isNearestColumn(int centerX, ColumnSpec col,
-										   Map<ColumnSpec, PPOcrV6Result> headers, int colCenter) {
+										   Map<ColumnSpec, PPOcrV6Result> headers,
+										   int colCenter, String text) {
+		boolean colMatches = col.pattern != null && col.pattern.matcher(text).find();
 		int bestDist = Math.abs(centerX - colCenter);
 		for (Map.Entry<ColumnSpec, PPOcrV6Result> e : headers.entrySet()) {
 			if (e.getKey() == col) continue;
+			ColumnSpec other = e.getKey();
 			PPOcrV6Result h = e.getValue();
 			int otherCenter = (LabelMatcher.minX(h) + LabelMatcher.maxX(h)) / 2;
 			int dist = Math.abs(centerX - otherCenter);
+			boolean otherMatches = other.pattern != null && other.pattern.matcher(text).find();
+			// 本列匹配但其它列不匹配 → 归本列（即使其它列几何更近）
+			if (colMatches && !otherMatches) continue;
+			// 其它列匹配但本列不匹配 → 不归本列
+			if (!colMatches && otherMatches) return false;
+			// 两边都匹配或都不匹配 → 按几何距离
 			if (dist < bestDist) return false;
 		}
 		return true;
