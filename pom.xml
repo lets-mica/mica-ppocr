@@ -44,7 +44,7 @@
              CI 通过显式 -Dmaven.compiler.release=8 走命令行注入，可绕开该问题。
              这样既不破坏本地默认构建（source/target 1.8），又能在 CI 卡住 Java 9+ API 残留。 -->
         <maven-flatten.version>1.8.0</maven-flatten.version>
-        <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
         <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
         <onnxruntime.version>1.18.0</onnxruntime.version>
