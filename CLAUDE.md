@@ -47,6 +47,13 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │           └── vehicle/                 ← 行驶证解析器（首个实现）
 │               ├── VehicleLicenseParser.java
 │               └── VehicleLicenseResult.java
+├── mica-ppocr-pdf/             ← PDF 双通道模块：文字型抽文本层坐标，扫描件渲染走 OCR
+│   └── src/main/java/net/dreamlu/mica/ai/ppocr/pdf/
+│       ├── PdfOcrSupport.java           ← 入口：%PDF- 魔数嗅探 + 双通道分流
+│       ├── PdfTextExtractor.java        ← 文本层坐标抽取（行聚类 + 大间距拆分）
+│       ├── PdfTextQuality.java          ← 文本层质量评分（字符数 + 可读占比）
+│       ├── PdfPageResult.java           ← per-page 结果（pageIndex + viaOcr）
+│       └── PdfOcrConfig.java            ← renderDpi / minTextChars / minReadableRatio / forceOcr
 └── mica-ppocr-spring-boot-starter/  ← Spring Boot 自动配置
     └── src/main/java/net/dreamlu/mica/ai/ppocr/autoconfigure/
         ├── PPOCRAutoConfiguration.java
@@ -99,7 +106,7 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `OrtSession`s (det + rec), is `Closeable` (use try-with-resources), and exposes `detect()`,
   `recognize()`, and the full `run(Mat)`. Accepts a `PPOcrV6Config` (Lombok `@Builder`).
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
-- **`engine/PPOcrV6Result`** — Java 17 `record` (text, score, box) returned to callers.
+- **`engine/PPOcrV6Result`** — Lombok 类（`@Accessors(fluent = true)`，text/score/box/rotatedDegrees），box 为 `int[][]` 四顶点（左上、右上、右下、左下）。
 - **`preprocessor/DetectionPreprocessor`** — resize to limit-side constraints, normalize, HWC→NCHW.
 - **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes.
 - **`preprocessor/RecognitionPreprocessor`** — batches crops, resizes, pads to common width.

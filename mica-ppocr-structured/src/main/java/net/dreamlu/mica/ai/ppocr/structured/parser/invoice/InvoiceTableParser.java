@@ -41,7 +41,9 @@ import java.util.regex.Pattern;
  *       相邻行 y 区间重叠时合并（OCR 常把 label/value 或"合计"拆成上下错位两框）；</li>
  *   <li><b>x 列分配</b>：行内每个框按 x 中心落入最近列区间，同列多框按 x 升序拼接；</li>
  *   <li><b>行级过滤</b>：汇总区/出行人区（含"合"+"计"fragment）命中即终止，
- *       购销方信息区命中即跳行，剔除全空行。</li>
+ *       购销方信息区命中即跳行，剔除全空行；</li>
+ *   <li><b>续行合并</b>：缺数值列（金额/税额）的行并入上一行对应列——明细行的"锚"
+ *       是数值列，缺锚说明该行是跨行延续（典型：商品名称换行），而非新明细。</li>
  * </ol>
  *
  * <p>列对齐由"同一行聚类 + 列内取值"保证，不存在逐列行数不一致导致的错位。
@@ -238,14 +240,41 @@ final class InvoiceTableParser {
 					if (extracted == null) continue;
 					sb.append(extracted);
 				}
-				if (sb.length() == 0) continue;
-				setField(item, col.key, sb.toString());
-				anyCell = true;
-			}
-			if (anyCell) items.add(item);
+			if (sb.length() == 0) continue;
+			setField(item, col.key, sb.toString());
+			anyCell = true;
 		}
-		return new TableResult(items);
+		if (!anyCell) continue;
+		// 明细行的"锚"是金额/税额（发票明细必带数值列）；缺数值列说明该行是
+		// 上一行的跨行延续（典型：商品名称换行，如 "*生产生活服务*开发服务"
+		// 下一行 "费用"），各列值并入上一行对应列，而非开新明细。
+		if (item.getAmount() != null || item.getTaxAmount() != null || items.isEmpty()) {
+			items.add(item);
+		} else {
+			mergeContinuation(items.get(items.size() - 1), item);
+		}
 	}
+	return new TableResult(items);
+}
+
+/**
+ * 跨行延续合并：上一行与续行的同名字段合并。
+ *
+ * <p>商品名称跨行直接拼接（名称断行语义即连续文本，如
+ * "开发服务" + "费用" → "开发服务费用"）；其余字段仅当上一行该列为空
+ * 时填入（规格型号/单价/数量等跨行版式罕见，避免误拼接）。
+ */
+private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
+	if (cont.getGoodsName() != null) {
+		prev.setGoodsName(prev.getGoodsName() == null
+			? cont.getGoodsName() : prev.getGoodsName() + cont.getGoodsName());
+	}
+	if (prev.getUnitPrice() == null) prev.setUnitPrice(cont.getUnitPrice());
+	if (prev.getQuantity() == null) prev.setQuantity(cont.getQuantity());
+	if (prev.getAmount() == null) prev.setAmount(cont.getAmount());
+	if (prev.getTaxRate() == null) prev.setTaxRate(cont.getTaxRate());
+	if (prev.getTaxAmount() == null) prev.setTaxAmount(cont.getTaxAmount());
+}
 
 	// ========================================================================
 	// 表头查找链路：完整等于 → 合并框 → fragment 拼接 → 单字后缀降级

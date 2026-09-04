@@ -2,6 +2,10 @@
 
 ## 发行版本
 
+### v1.3.0 - Unreleased
+- fix(structured): 修复发票商品名称跨行被误拆为两条明细。明细行的"锚"是数值列（金额/税额），`InvoiceTableParser` 新增续行合并：缺数值列的行（典型如商品名称换行，真实数电票版式）并入上一行对应列，goodsName 直接拼接、其余字段仅补空。真实样本验证：`*生产生活服务*开发服务` + `费用` → 单条明细 `*生产生活服务*开发服务费用`。
+- feat(pdf): 新增 `mica-ppocr-pdf` PDF 双通道模块。文字型 PDF（数电票 / 电子发票等税控系统生成的矢量 PDF）直接抽取文本层坐标——字符 100% 无损、零推理开销，产出与 OCR 结果同构的 `PPOcrV6Result`（score=1.0），结构化解析层（发票 / 证件解析器）零适配复用；扫描件自动降级 PDFBox 渲染位图（DPI 可配，默认 200）走 `PPOcrV6Engine.runMat` 完整 OCR 链路。文本层可用性双阈值判定（字符数 + 可读占比），缺 ToUnicode 的 CID 字体 / Type3 字形 / 整页图片等"伪文字型 PDF"自动落到 OCR 通道；`forceOcr` 可强制 OCR 兜底竖排 / 旋转版式。入口 `PdfOcrSupport`（`%PDF-` 魔数嗅探容忍 header 垃圾数据，逐页返回带 pageIndex 与 viaOcr 标注）。依赖按需引入（pdfbox 3.0.8，要求 Java 8）。
+
 ### v1.2.1 - 2026-09-01
 - feat(structured): 优化行驶证结构化解析。
 - feat(structured): 发票解析统一入口 + 支持新版电子发票（数电票）。
