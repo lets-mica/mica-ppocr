@@ -28,11 +28,7 @@ import java.util.List;
 /**
  * PDF 单页 OCR 结果：页码 + 该页文本框列表 + 实际走的通道。
  *
- * <p>语义与 PaddleOCR 官方 pipeline 的 {@code page_index} 对齐：
- * PDF 输入天然是 N 页，逐页返回，页码从 0 开始（官方为 1 起，
- * Java 侧按惯例 0 起）。
- *
- * <p>{@link #results()} 与 {@code PPOcrV6Engine.run(...)} 的返回类型一致，
+ * <p>{@link #results()} 与 {@code PPOcrV6Engine.run(...)} 的返回元素同构，
  * 可直接喂给 mica-ppocr-structured 的 {@code parseResults(List)} 复用
  * 现有结构化解析层（发票 / 行驶证 / 身份证等）。
  */

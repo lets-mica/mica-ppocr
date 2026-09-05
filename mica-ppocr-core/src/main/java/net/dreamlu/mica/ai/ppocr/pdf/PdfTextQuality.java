@@ -68,7 +68,7 @@ public final class PdfTextQuality {
 	/**
 	 * 双阈值判定文本层是否可用。
 	 *
-	 * @param minTextChars    最小非空白字符数
+	 * @param minTextChars     最小非空白字符数
 	 * @param minReadableRatio 最小可读占比，范围 [0, 1]
 	 * @return true 表示文本层可用，可走坐标抽取通道
 	 */

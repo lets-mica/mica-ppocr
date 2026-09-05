@@ -29,10 +29,10 @@ import java.util.List;
  * <p>故意不嗅探图片魔数（PNG / JPG / BMP ...）——OpenCV 的 imdecode
  * 自身能正确识别所有支持的位图格式，错误时由引擎 {@code run(byte[])} 抛
  * 明确异常（"Failed to decode image ..."）。这里只对 PDF 做"拒绝"判定：
- * 若嗅探到 PDF 魔数而 classpath 中又没有 PDF loader，明确告诉调用方去引
- * mica-ppocr-pdf 模块，而不是默默把 PDF 字节当图片解码。
+ * 若嗅探到 PDF 魔数，明确告诉调用方走 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine#runPdf(byte[])}
+ * 而不是默默把 PDF 字节当图片解码。
  *
- * <p>优先级 -100（兜底），保证 PDF / TIFF / Word 等专用 loader 优先匹配。
+ * <p>优先级 -100（兜底），保证未来扩展的 TIFF / Word 等专用 loader 优先匹配。
  *
  * <h3>线程安全</h3>
  * 无状态，可单例共享。
@@ -44,12 +44,11 @@ public class ImageInputLoader implements InputLoader {
 		if (input == null) {
 			return false;
 		}
-		// PDF 不在图片通道处理范围；classpath 有 PdfInputLoader 时它会优先命中。
-		// 这里只负责"明确告诉调用方你引错了模块"——嗅探到 PDF 就拒绝。
+		// PDF 不在图片通道处理范围：嗅探到 PDF 字节就拒绝，
+		// 引导调用方走 engine.runPdf(...) 入口。
 		if (input.source() == OcrInput.Source.BYTES && PdfMagicDetector.isPdf(input.bytes())) {
 			return false;
 		}
-		// 其他 kind 一律交给本 loader（图片）
 		return input.kind() == OcrInput.Kind.IMAGE;
 	}
 

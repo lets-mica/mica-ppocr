@@ -17,7 +17,6 @@
 package net.dreamlu.mica.ai.ppocr.autoconfigure;
 
 import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
-import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrSupport;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -35,10 +34,8 @@ class PdfAutoConfigurationTest {
 		new ApplicationContextRunner()
 			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
 			.withPropertyValues("mica.ai.ppocr.pdf.enabled=false")
-			.withBean(net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine.class, () -> null)
 			.run(context -> {
 				assertThat(context).hasNotFailed();
-				assertThat(context).doesNotHaveBean(PdfOcrSupport.class);
 				assertThat(context).doesNotHaveBean(PdfOcrConfig.class);
 			});
 	}
@@ -46,10 +43,8 @@ class PdfAutoConfigurationTest {
 	@Test
 	void pdfConfigBindingIsolated() {
 		// 隔离 PDF 配置绑定：只注册 PdfAutoConfiguration（不依赖 engine 创建）
-		// PPOcrV6Engine 注入为 null 占位 — @ConditionalOnBean 只检查类型是否存在
 		new ApplicationContextRunner()
 			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
-			.withBean(net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine.class, () -> null)
 			.run(context -> {
 				assertThat(context).hasBean("pdfOcrConfig");
 				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
@@ -69,7 +64,6 @@ class PdfAutoConfigurationTest {
 				"mica.ai.ppocr.pdf.min-readable-ratio=0.8",
 				"mica.ai.ppocr.pdf.force-ocr=true"
 			)
-			.withBean(net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine.class, () -> null)
 			.run(context -> {
 				assertThat(context).hasBean("pdfOcrConfig");
 				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
@@ -77,17 +71,6 @@ class PdfAutoConfigurationTest {
 				assertThat(cfg.getMinTextChars()).isEqualTo(50);
 				assertThat(cfg.getMinReadableRatio()).isEqualTo(0.8);
 				assertThat(cfg.isForceOcr()).isTrue();
-			});
-	}
-
-	@Test
-	void pdfSupportBeanCreated() {
-		new ApplicationContextRunner()
-			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
-			.withBean(net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine.class, () -> null)
-			.run(context -> {
-				assertThat(context).hasBean("pdfOcrSupport");
-				assertThat(context.getBean(PdfOcrSupport.class)).isNotNull();
 			});
 	}
 }

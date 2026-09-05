@@ -16,29 +16,40 @@ When changing numeric logic, verify against the Python implementation rather tha
 
 **Java 8 兼容性约束**：源码编译目标为 Java 8（`<maven.compiler.source>1.8</maven.compiler.source>`），
 所有 runtime 依赖的字节码均已校验为 Java 8（major 52）。禁止使用 Java 9+ 语言特性和标准库 API：
+
 - **语言特性**：不要用 `record`（用 Lombok `@Value` + `@Accessors(fluent = true)` 替代）；不要用 `instanceof`
   模式匹配、`switch` 表达式、文本块、`var`
+
 - **集合工厂**：不要用 `List.of`/`Set.of`/`Map.of`（用 `CollUtil.listOf/setOf/mapOf` 替代）
+
 - **字符串 API**（Java 11+）：不要用 `String.stripTrailing/stripLeading/strip/isBlank/repeat/lines`，
   统一用 `CollUtil.stripTrailing/repeat`；其余若用到请在 `CollUtil` 添 helper
+
 - **IO API**（Java 9/11+）：不要用 `InputStream.readAllBytes` / `Files.writeString` / `Path.of` / `Stream.toList`，
   统一用 `CollUtil.readAllBytes/writeString/pathOf/toList`
+
 - **编译参数**：`maven.compiler.release` 故意不设置。Lombok 1.18.x + JDK 17+ 在 `release 1.8`
   下会触发"不支持发行版本 1.8"；用 `-source/-target` 时若保留 `release` 也会踩坑。
-  且**不要在无 `--release` 情况下混用 Java 11+ API**——`javac` 会用 JDK 17 rt.jar 解析，编译通过但
+  且**不要在无** **`--release`** **情况下混用 Java 11+ API**——`javac` 会用 JDK 17 rt.jar 解析，编译通过但
   Java 8 运行时 `NoSuchMethodError`。所有 Java 11+ API 都走 `CollUtil` 兜底。
 
 ## Module structure
 
 ```
 mica-ppocr/                     ← parent pom (packaging=pom)
-├── mica-ppocr-core/            ← 核心引擎，零 Spring 依赖
+├── mica-ppocr-core/            ← 核心引擎 + PDF 双通道，零 Spring 依赖
 │   └── src/main/java/net/dreamlu/mica/ai/ppocr/
-│       ├── engine/PPOcrV6Engine.java, PPOcrV6Result.java
+│       ├── engine/PPOcrV6Engine.java     ← run/runPdf/runMat/runPages 等入口
+│       ├── engine/PPOcrV6Result.java
 │       ├── config/PPOcrV6Config.java
 │       ├── preprocessor/DetectionPreprocessor.java, RecognitionPreprocessor.java
 │       ├── postprocessor/DbPostProcessor.java, CtcLabelDecoder.java
-│       └── utils/{BoxUtil, CropUtil, Offset, NdArrayUtils, OrtProviders}.java
+│       ├── pdf/                          ← PDF 双通道（与 engine 同模块）
+│       │   ├── PdfOcrConfig.java         ← renderDpi / minTextChars / minReadableRatio / forceOcr
+│       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分）
+│       │   ├── PdfTextQuality.java       ← 文本层质量评分（字符数 + 可读占比）
+│       │   └── PdfPageResult.java        ← per-page 结果（pageIndex + viaOcr）
+│       └── utils/{BoxUtil, BufferedImageUtils, CropUtil, Offset, NdArrayUtils, OrtProviders, PdfMagicDetector}.java
 ├── mica-ppocr-structured/      ← 结构化解析模块：把 OCR 散落文字框组织成业务字段
 │   └── src/main/java/net/dreamlu/mica/ai/ppocr/structured/
 │       ├── BaseStructuredParser.java    ← SPI 接口 (parseResults)
@@ -47,17 +58,13 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │           └── vehicle/                 ← 行驶证解析器（首个实现）
 │               ├── VehicleLicenseParser.java
 │               └── VehicleLicenseResult.java
-├── mica-ppocr-pdf/             ← PDF 双通道模块：文字型抽文本层坐标，扫描件渲染走 OCR
-│   └── src/main/java/net/dreamlu/mica/ai/ppocr/pdf/
-│       ├── PdfOcrSupport.java           ← 入口：%PDF- 魔数嗅探 + 双通道分流
-│       ├── PdfTextExtractor.java        ← 文本层坐标抽取（行聚类 + 大间距拆分）
-│       ├── PdfTextQuality.java          ← 文本层质量评分（字符数 + 可读占比）
-│       ├── PdfPageResult.java           ← per-page 结果（pageIndex + viaOcr）
-│       └── PdfOcrConfig.java            ← renderDpi / minTextChars / minReadableRatio / forceOcr
+├── mica-ppocr-solon-plugin/    ← Solon 自动配置
 └── mica-ppocr-spring-boot-starter/  ← Spring Boot 自动配置
     └── src/main/java/net/dreamlu/mica/ai/ppocr/autoconfigure/
         ├── PPOCRAutoConfiguration.java
         ├── PPOCRProperties.java
+        ├── PdfAutoConfiguration.java    ← 把 mica.ai.ppocr.pdf.* 绑定为 PdfOcrConfig
+        ├── PPOcrTemplate.java           ← 解析器模板（不含 PDF 反射门面）
         └── OpenCVNativeLoader.java
 ```
 
@@ -105,43 +112,71 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 - **`engine/PPOcrV6Engine`** — the orchestrator and only public entry point. Owns the two
   `OrtSession`s (det + rec), is `Closeable` (use try-with-resources), and exposes `detect()`,
   `recognize()`, and the full `run(Mat)`. Accepts a `PPOcrV6Config` (Lombok `@Builder`).
+
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
+
 - **`engine/PPOcrV6Result`** — Lombok 类（`@Accessors(fluent = true)`，text/score/box/rotatedDegrees），box 为 `int[][]` 四顶点（左上、右上、右下、左下）。
+
 - **`preprocessor/DetectionPreprocessor`** — resize to limit-side constraints, normalize, HWC→NCHW.
+
 - **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes.
+
 - **`preprocessor/RecognitionPreprocessor`** — batches crops, resizes, pads to common width.
+
 - **`postprocessor/CtcLabelDecoder`** — loads char dict, CTC greedy decode → text + score.
+
 - **`utils/`** — the numpy/cv2 equivalents:
+
   - `NdArrayUtils` — argmax/max/stack/pad/clip over float arrays.
+
   - `BoxUtil` — `sortQuadBoxes` (reading order), minAreaRect/boxPoints.
+
   - `Offset` — pyclipper `PyclipperOffset` equivalent via JTS `BufferOp` + `JOIN_ROUND`.
+
   - `CropUtil` — perspective-warp crop; returns `null` for invalid crops;
     `run()` filters these `null`s out — preserve this null-skip contract.
+
   - `OrtProviders` — picks the ORT execution provider; `forceCpu` (negation of
     `preferAccelerator`) is the default.
 
 ### mica-ppocr-structured
 
 - **`BaseStructuredParser<R>`** — `@FunctionalInterface` SPI 接口，规范所有解析器的入口签名 `parseResults(List<PPOcrV6Result>) → R`。
+
 - **`LabelMatcher`** — 公共骨架（`@UtilityClass`）：
+
   - `matchValue` 标签定位 + 位置匹配；
+
   - `findLabelBox` 支持 OCR 残缺标签模糊匹配；
+
   - `matchPattern` / `labelOrFallback` 内容正则兜底；
+
   - `matchSubstring` OCR 噪声场景的子串提取；
+
   - 几何工具 `minX/maxX/minY/maxY`。
+
 - **`parser.vehicle.VehicleLicenseParser`** — 首个实现（行驶证）。同时提供：
+
   - 静态 `parse(List)` 工具类风格入口；
+
   - 实例方法 `parseResults` 实现 SPI；
+
   - `INSTANCE` 单例，便于 Spring 注入。
+
 - **新解析器待办**：身份证（正反面） / 银行卡 / 驾照。
 
 ### mica-ppocr-spring-boot-starter
 
 - **`PPOCRAutoConfiguration`** — auto-wires `PPOcrV6Engine` bean when `mica.ai.ppocr.enabled=true`.
+
 - **`PPOCRProperties`** — `@ConfigurationProperties("mica.ai.ppocr")` binding.
+
 - **`StructuredParserAutoConfiguration`** — 注册 6 个内置解析器与 `PPOcrTemplate`：
+
   - 每个解析器通过 `new XxxParser(PPOcrV6Engine)` 绑定 engine；
+
   - `PPOcrTemplate` 通过 `vehicleLicense()` / `idCard()` 等 getter 获取已绑定 engine 的解析器实例。
+
 - **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
 
 ### Porting conventions
@@ -153,19 +188,22 @@ Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offs
 ### Known divergences from Python
 
 - `pyclipper` uses scaled-integer math; JTS `BufferOp` uses doubles → unclip differs by <1px.
+
 - No CoreML provider in ONNX Runtime Java API.
+
 - For CUDA: swap `onnxruntime`→`onnxruntime_gpu` in pom.xml and set `preferAccelerator(true)`.
 
 ### 运行时依赖基线（已校验 Java 8 字节码）
 
-| 依赖 | 版本 | 最低 Java |
-|------|------|----------|
-| onnxruntime | 1.18.0 | Java 8 |
-| opencv (openpnp) | 4.9.0-0 | Java 8 |
-| jts-core | 1.20.0 | Java 8 |
-| slf4j-api | 2.0.18 | Java 8 |
-| slf4j-simple | 2.0.18（**test scope only** —— 替代原 logback-classic 1.3.15） | Java 8 |
-| lombok | 1.18.46 | Java 8 |
-| spring-boot-dependencies | 2.7.18（替代原 3.5.16，3.x 是 Java 17） | Java 8 |
-| mica-auto | 2.3.5（替代原 4.0.1，3.x/4.x 是 Java 17） | Java 8 |
-| solon | 4.0.6（**保留** — 实测所有 class 文件 max major = 52） | Java 8 |
+| 依赖                       | 版本                                                        | 最低 Java |
+| ------------------------ | --------------------------------------------------------- | ------- |
+| onnxruntime              | 1.18.0                                                    | Java 8  |
+| opencv (openpnp)         | 4.9.0-0                                                   | Java 8  |
+| jts-core                 | 1.20.0                                                    | Java 8  |
+| slf4j-api                | 2.0.18                                                    | Java 8  |
+| slf4j-simple             | 2.0.18（**test scope only** —— 替代原 logback-classic 1.3.15） | Java 8  |
+| lombok                   | 1.18.46                                                   | Java 8  |
+| spring-boot-dependencies | 2.7.18（替代原 3.5.16，3.x 是 Java 17）                          | Java 8  |
+| mica-auto                | 2.3.5（替代原 4.0.1，3.x/4.x 是 Java 17）                        | Java 8  |
+| solon                    | 4.0.6（**保留** — 实测所有 class 文件 max major = 52）              | Java 8  |
+

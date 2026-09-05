@@ -53,11 +53,7 @@ public final class OcrInput {
 		/**
 		 * 单张图片（PNG / JPG / BMP 等 OpenCV 直接支持的格式）。
 		 */
-		IMAGE,
-		/**
-		 * PDF 文档（可能单页 / 多页；Loader 需自行决定是否双通道分流）。
-		 */
-		PDF
+		IMAGE
 	}
 
 	/**
@@ -149,55 +145,5 @@ public final class OcrInput {
 			throw new IllegalArgumentException("stream must not be null");
 		}
 		return new OcrInput(Kind.IMAGE, Source.STREAM, null, null, stream);
-	}
-
-	/**
-	 * 构造 PDF 输入（字节）。
-	 *
-	 * @param bytes PDF 字节
-	 * @return OcrInput 实例
-	 */
-	public static OcrInput pdf(byte[] bytes) {
-		if (bytes == null || bytes.length == 0) {
-			throw new IllegalArgumentException("bytes must not be empty");
-		}
-		return new OcrInput(Kind.PDF, Source.BYTES, bytes.clone(), null, null);
-	}
-
-	/**
-	 * 构造 PDF 输入（路径）。
-	 *
-	 * @param path 路径字符串
-	 * @return OcrInput 实例
-	 */
-	public static OcrInput pdf(String path) {
-		if (path == null || path.isEmpty()) {
-			throw new IllegalArgumentException("path must not be empty");
-		}
-		return new OcrInput(Kind.PDF, Source.PATH, null, path, null);
-	}
-
-	/**
-	 * 构造 PDF 输入（Path）。
-	 *
-	 * @param path 文件路径
-	 * @return OcrInput 实例
-	 */
-	public static OcrInput pdf(Path path) {
-		Objects.requireNonNull(path, "path must not be null");
-		return pdf(path.toString());
-	}
-
-	/**
-	 * 构造 PDF 输入（输入流）。
-	 *
-	 * @param stream 输入流
-	 * @return OcrInput 实例
-	 */
-	public static OcrInput pdf(InputStream stream) {
-		if (stream == null) {
-			throw new IllegalArgumentException("stream must not be null");
-		}
-		return new OcrInput(Kind.PDF, Source.STREAM, null, null, stream);
 	}
 }

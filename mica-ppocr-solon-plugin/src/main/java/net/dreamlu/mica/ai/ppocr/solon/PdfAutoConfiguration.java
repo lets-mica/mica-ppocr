@@ -16,27 +16,21 @@
 
 package net.dreamlu.mica.ai.ppocr.solon;
 
-import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
-import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrSupport;
 import org.noear.solon.annotation.Bean;
 import org.noear.solon.annotation.Condition;
 import org.noear.solon.annotation.Configuration;
 
 /**
- * PDF OCR 通道自动配置（Solon 版）。
+ * PDF OCR 通道配置自动配置（Solon 版）。
  *
- * <p>启用条件：classpath 存在 {@link PdfOcrSupport}（即 {@code mica-ppocr-pdf} 已被引入）
- * 且 {@code mica.ai.ppocr.pdf.enabled=true}（默认）且存在 {@link PPOcrV6Engine}。
+ * <p>启用条件：{@code mica.ai.ppocr.pdf.enabled=true}（默认）。
  *
- * <p>{@code PPOcrTemplate.pdf()} 在 PDF 模块缺失时返回 null。
+ * <p>业务方可在自定义服务里通过 {@code @Inject} 注入 {@link PdfOcrConfig}，
+ * 然后直接调用 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine#runPdf(byte[], PdfOcrConfig)}。
  */
 @Configuration
-@Condition(
-	onClass = PdfOcrSupport.class,
-	onBean = PPOcrV6Engine.class,
-	onExpression = "${mica.ai.ppocr.pdf.enabled:true} == true"
-)
+@Condition(onExpression = "${mica.ai.ppocr.pdf.enabled:true} == true")
 public class PdfAutoConfiguration {
 
 	/**
@@ -55,18 +49,5 @@ public class PdfAutoConfiguration {
 			.minReadableRatio(p.getMinReadableRatio())
 			.forceOcr(p.isForceOcr())
 			.build();
-	}
-
-	/**
-	 * PDF 双通道入口门面 Bean。
-	 *
-	 * @param engine       推理引擎
-	 * @param pdfOcrConfig PDF 配置
-	 * @return PdfOcrSupport 实例
-	 */
-	@Bean
-	@Condition(onMissingBean = PdfOcrSupport.class)
-	public PdfOcrSupport pdfOcrSupport(PPOcrV6Engine engine, PdfOcrConfig pdfOcrConfig) {
-		return new PdfOcrSupport(engine, pdfOcrConfig);
 	}
 }

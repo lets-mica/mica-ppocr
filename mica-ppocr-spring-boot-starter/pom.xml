@@ -23,23 +23,6 @@
             <groupId>net.dreamlu</groupId>
             <artifactId>mica-ppocr-structured</artifactId>
         </dependency>
-        <!--
-            mica-ppocr-pdf 默认引入 starter：
-            - 内部把 pdfbox 标 optional=true，业务方不会背 pdfbox 传递依赖
-            - starter 显式拉 pdfbox（与 solon-plugin 行为对齐）：
-                Spring 启动期会按 bean 引用解析类图，pdfbox 必须在 starter 自身 classpath，
-                否则 @ConditionalOnClass(PdfOcrSupport) 阶段会因类加载失败导致 BeanCreationException
-            - 装配期由 PdfAutoConfiguration 的 @ConditionalOnClass(PdfOcrSupport) 二次保护
-            - 未启用 PDF 时（mica.ai.ppocr.pdf.enabled=false）仅占体积不占初始化
-        -->
-        <dependency>
-            <groupId>net.dreamlu</groupId>
-            <artifactId>mica-ppocr-pdf</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.pdfbox</groupId>
-            <artifactId>pdfbox</artifactId>
-        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-autoconfigure</artifactId>

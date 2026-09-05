@@ -61,7 +61,6 @@
     <modules>
         <module>mica-ppocr-core</module>
         <module>mica-ppocr-structured</module>
-        <module>mica-ppocr-pdf</module>
         <module>mica-ppocr-solon-plugin</module>
         <module>mica-ppocr-spring-boot-starter</module>
     </modules>
@@ -112,11 +111,6 @@
                 <groupId>org.apache.pdfbox</groupId>
                 <artifactId>pdfbox</artifactId>
                 <version>${pdfbox.version}</version>
-            </dependency>
-            <dependency>
-                <groupId>net.dreamlu</groupId>
-                <artifactId>mica-ppocr-pdf</artifactId>
-                <version>${revision}</version>
             </dependency>
             <dependency>
                 <groupId>org.slf4j</groupId>

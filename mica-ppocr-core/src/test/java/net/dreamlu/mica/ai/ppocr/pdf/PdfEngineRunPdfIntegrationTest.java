@@ -33,7 +33,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link PdfOcrSupport} 端到端集成测试（真实模型 + 合成 PDF）。
+ * {@link PPOcrV6Engine#runPdf} 端到端集成测试（真实模型 + 合成 PDF）。
  *
  * <p>依赖仓库根目录 {@code models/ppocr-v6/tiny/} 模型；模型缺失时通过
  * {@link Assumptions} 跳过（模型不随仓库分发）。
@@ -41,7 +41,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>渲染通道样本为合成"扫描件"（整页位图 PDF）；真实数电票 / 扫描发票
  * PDF 样本验证请补充至 test_resources 后扩展本类。
  */
-class PdfOcrSupportIntegrationTest {
+class PdfEngineRunPdfIntegrationTest {
 
 	private static final String DEFAULT_TIER = "tiny";
 
@@ -70,8 +70,7 @@ class PdfOcrSupportIntegrationTest {
 			"tiny 模型缺失，跳过集成测试");
 
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
-			PdfOcrSupport support = new PdfOcrSupport(engine);
-			List<PdfPageResult> pages = support.run(electronicInvoiceStylePdf());
+			List<PdfPageResult> pages = engine.runPdf(electronicInvoiceStylePdf());
 
 			assertEquals(1, pages.size());
 			assertFalse(pages.get(0).viaOcr(), "text-type pdf must not consume inference");
@@ -90,8 +89,7 @@ class PdfOcrSupportIntegrationTest {
 
 		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
-			PdfOcrSupport support = new PdfOcrSupport(engine);
-			List<PdfPageResult> pages = support.run(imageOnlyPdf());
+			List<PdfPageResult> pages = engine.runPdf(imageOnlyPdf());
 
 			assertEquals(1, pages.size());
 			assertTrue(pages.get(0).viaOcr(), "image-only pdf must go through ocr channel");

@@ -33,6 +33,10 @@ import net.dreamlu.mica.ai.ppocr.loader.InputLoaders;
 import net.dreamlu.mica.ai.ppocr.loader.LoaderContext;
 import net.dreamlu.mica.ai.ppocr.loader.OcrInput;
 import net.dreamlu.mica.ai.ppocr.loader.Page;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfPageResult;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfTextExtractor;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfTextQuality;
 import net.dreamlu.mica.ai.ppocr.postprocessor.CtcLabelDecoder;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DbPostProcessor;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DocOrientationPostprocessor;
@@ -44,10 +48,17 @@ import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfByte;
 import org.opencv.imgcodecs.Imgcodecs;
+import nu.pattern.OpenCV;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
 
+import java.awt.image.BufferedImage;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.FloatBuffer;
 import java.nio.file.Files;
@@ -100,6 +111,7 @@ public final class PPOcrV6Engine implements Closeable {
 	private final DocOrientationPostprocessor docOriPost;
 	private final boolean docOriEnabled;
 	private final PPOcrV6Config config;
+	private final PdfTextExtractor pdfExtractor = new PdfTextExtractor();
 
 	private boolean closed = false;
 
@@ -811,7 +823,7 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
-	 * 完整 OCR 流程的统一入口：图片 / PDF / 未来扩展格式（TIFF / Word）都走这里。
+	 * 完整 OCR 流程的统一入口：图片 / 未来扩展格式（TIFF / Word）都走这里。
 	 *
 	 * <p>内部用 {@link InputLoaders} 选 loader 解析为页列表，逐页跑 {@code runMat}。
 	 * 单页输入（如图片）返回 1 条结果。
@@ -829,9 +841,7 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 		InputLoader loader = InputLoaders.find(input);
 		if (loader == null) {
-			throw new IllegalArgumentException(
-				"no InputLoader can handle " + input
-					+ "; for PDF input please ensure mica-ppocr-pdf is on the classpath");
+			throw new IllegalArgumentException("no InputLoader can handle " + input);
 		}
 		List<Page> pages = loader.load(input, newLoaderContext());
 		List<PageResult> results = new ArrayList<>(pages.size());
@@ -850,9 +860,6 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 完整 OCR 流程：单页返回。
 	 *
-	 * <p>多页输入（PDF）会把所有页的 {@link PPOcrV6Result} 展平成一条长列表。
-	 * 需要区分页时改用 {@link #runPages(OcrInput)}。
-	 *
 	 * @param input 输入
 	 * @return 文本框列表
 	 * @throws IllegalArgumentException input 为 null / 无可用 loader
@@ -869,5 +876,130 @@ public final class PPOcrV6Engine implements Closeable {
 			flat.addAll(page.results());
 		}
 		return flat;
+	}
+
+	// ==================================================================
+	// PDF 双通道入口：每页文本层命中走坐标抽取；否则降级渲染 + OCR
+	// ==================================================================
+
+	/**
+	 * PDF 双通道解析（默认配置）。
+	 *
+	 * @param pdfBytes PDF 字节
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	public List<PdfPageResult> runPdf(byte[] pdfBytes) throws IOException {
+		return runPdf(pdfBytes, PdfOcrConfig.defaults());
+	}
+
+	/**
+	 * PDF 双通道解析（默认配置）。
+	 *
+	 * @param pdfPath PDF 路径
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	public List<PdfPageResult> runPdf(String pdfPath) throws IOException {
+		if (pdfPath == null || pdfPath.isEmpty()) {
+			throw new IllegalArgumentException("pdfPath must not be empty");
+		}
+		return runPdf(Files.readAllBytes(CollUtil.pathOf(pdfPath)));
+	}
+
+	/**
+	 * PDF 双通道解析（默认配置）。
+	 *
+	 * @param pdfPath PDF 路径
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	public List<PdfPageResult> runPdf(Path pdfPath) throws IOException {
+		if (pdfPath == null) {
+			throw new IllegalArgumentException("pdfPath must not be null");
+		}
+		return runPdf(Files.readAllBytes(pdfPath));
+	}
+
+	/**
+	 * PDF 双通道解析（默认配置）。
+	 *
+	 * @param in PDF 输入流（流由调用方关闭，本方法只读到 EOF）
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	public List<PdfPageResult> runPdf(InputStream in) throws IOException {
+		if (in == null) {
+			throw new IllegalArgumentException("InputStream must not be null");
+		}
+		return runPdf(CollUtil.readAllBytes(in));
+	}
+
+	/**
+	 * PDF 双通道解析。
+	 *
+	 * @param pdfBytes PDF 字节
+	 * @param config   PDF 配置（不可为 null）
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	public List<PdfPageResult> runPdf(byte[] pdfBytes, PdfOcrConfig config) throws IOException {
+		if (config == null) {
+			throw new IllegalArgumentException("config must not be null");
+		}
+		if (pdfBytes == null || pdfBytes.length == 0) {
+			throw new IllegalArgumentException("pdfBytes must not be empty");
+		}
+		if (!PdfMagicDetector.isPdf(pdfBytes)) {
+			throw new IllegalArgumentException(
+				"input bytes are not a PDF (missing %PDF- magic); use run(byte[]) for images");
+		}
+		try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+			return runPdfPages(doc, config);
+		}
+	}
+
+	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config) throws IOException {
+		requireOpen();
+		int pageCount = doc.getNumberOfPages();
+		List<PdfPageResult> pages = new ArrayList<>(pageCount);
+		PDFRenderer renderer = null;
+		for (int i = 0; i < pageCount; i++) {
+			if (config.isForceOcr()) {
+				renderer = ensureRenderer(doc, renderer);
+				pages.add(ocrPdfPage(i, renderer, config));
+				continue;
+			}
+			List<PPOcrV6Result> textResults = pdfExtractor.extract(doc, i);
+			PdfTextQuality quality = pdfExtractor.quality(textResults);
+			if (quality.usable(config.getMinTextChars(), config.getMinReadableRatio())) {
+				pages.add(new PdfPageResult(i, false, textResults));
+			} else {
+				renderer = ensureRenderer(doc, renderer);
+				pages.add(ocrPdfPage(i, renderer, config));
+			}
+		}
+		return pages;
+	}
+
+	private static PDFRenderer ensureRenderer(PDDocument doc, PDFRenderer renderer) {
+		return renderer != null ? renderer : new PDFRenderer(doc);
+	}
+
+	/**
+	 * 渲染通道：按配置 DPI 渲染页面为 BGR Mat，走完整 OCR 链路。
+	 */
+	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config) throws IOException {
+		// openpnp OpenCV 本地库幂等加载（starter/solon 已被 OpenCVNativeLoader 提前加载，此处为非容器兜底）
+		OpenCV.loadLocally();
+		BufferedImage image = renderer.renderImageWithDPI(pageIndex, config.getRenderDpi(), ImageType.RGB);
+		Mat mat = BufferedImageUtils.toBgrMat(image);
+		List<PPOcrV6Result> results;
+		try {
+			results = runMat(mat);
+		} finally {
+			mat.release();
+		}
+		return new PdfPageResult(pageIndex, true, results);
 	}
 }

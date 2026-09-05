@@ -27,6 +27,14 @@
             <groupId>org.locationtech.jts</groupId>
             <artifactId>jts-core</artifactId>
         </dependency>
+        <!--
+            PDFBox 3.x：PDF 双通道（文本层坐标抽取 + 渲染兜底）的唯一依赖。
+            core 强依赖；下游若无需 PDF 通道，可显式 exclude。
+        -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>

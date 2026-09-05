@@ -25,7 +25,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.electronicInvoiceStylePdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.imageOnlyPdf;
+import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.multiPageTextPdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.spec;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.textPdf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -42,7 +44,7 @@ class PdfTextExtractorTest {
 
 	@Test
 	void extractsTextLinesInReadingOrder() throws IOException {
-		try (PDDocument doc = Loader.loadPDF(TestPdfFactory.electronicInvoiceStylePdf())) {
+		try (PDDocument doc = Loader.loadPDF(electronicInvoiceStylePdf())) {
 			List<PPOcrV6Result> results = extractor.extract(doc, 0);
 
 			// "Invoice No"（x=60）与 "Issue Date"（x=380）同 baseline，
@@ -97,7 +99,7 @@ class PdfTextExtractorTest {
 
 	@Test
 	void extractsEachPageIndependently() throws IOException {
-		byte[] pdf = TestPdfFactory.multiPageTextPdf(2);
+		byte[] pdf = multiPageTextPdf(2);
 		try (PDDocument doc = Loader.loadPDF(pdf)) {
 			assertEquals(2, doc.getNumberOfPages());
 			List<PPOcrV6Result> page0 = extractor.extract(doc, 0);
@@ -142,7 +144,7 @@ class PdfTextExtractorTest {
 
 	@Test
 	void extractRejectsBadArguments() throws IOException {
-		try (PDDocument doc = Loader.loadPDF(TestPdfFactory.electronicInvoiceStylePdf())) {
+		try (PDDocument doc = Loader.loadPDF(electronicInvoiceStylePdf())) {
 			assertThrows(IllegalArgumentException.class, () -> extractor.extract(null, 0));
 			assertThrows(IndexOutOfBoundsException.class, () -> extractor.extract(doc, -1));
 			assertThrows(IndexOutOfBoundsException.class, () -> extractor.extract(doc, doc.getNumberOfPages()));

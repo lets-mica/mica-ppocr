@@ -21,10 +21,8 @@ import org.junit.jupiter.api.Test;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -65,17 +63,6 @@ class InputLoadersTest {
 		InputLoader loader = InputLoaders.find(imageInput);
 		assertNotNull(loader);
 		assertTrue(loader instanceof ImageInputLoader);
-	}
-
-	@Test
-	void ocrInput_pdfInput_rejectedByImageInputLoader() {
-		// kind=PDF + 字节是 PDF magic：ImageInputLoader 应拒绝
-		byte[] pdfBytes = "%PDF-1.7\n".getBytes(StandardCharsets.ISO_8859_1);
-		OcrInput pdfInput = OcrInput.pdf(pdfBytes);
-		InputLoader loader = InputLoaders.find(pdfInput);
-		// 当前 core 单独测试时 MicaPdf 不会被 ServiceLoader 命中，所以应该返回 null
-		// （找不到 loader 是预期行为；真实使用场景下 mica-ppocr-pdf 在 classpath）
-		assertSame(null, loader, "without mica-ppocr-pdf on classpath, PDF input has no loader");
 	}
 
 	@Test

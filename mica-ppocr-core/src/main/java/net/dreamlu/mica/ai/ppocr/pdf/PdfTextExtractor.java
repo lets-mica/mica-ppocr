@@ -79,7 +79,7 @@ public class PdfTextExtractor {
 	 * @param doc       PDF 文档
 	 * @param pageIndex 页码，从 0 开始
 	 * @return 文本行列表（与 OCR 结果同构）；无文本层时返回空列表
-	 * @throws IOException           读取页面内容流失败
+	 * @throws IOException               读取页面内容流失败
 	 * @throws IndexOutOfBoundsException 页码越界
 	 */
 	public List<PPOcrV6Result> extract(PDDocument doc, int pageIndex) throws IOException {

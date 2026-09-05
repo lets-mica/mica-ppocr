@@ -71,18 +71,6 @@ class OcrInputTest {
 	}
 
 	@Test
-	void pdfBytes_constructs() {
-		OcrInput input = OcrInput.pdf("%PDF-1.7".getBytes(StandardCharsets.ISO_8859_1));
-		assertEquals(OcrInput.Kind.PDF, input.kind());
-	}
-
-	@Test
-	void pdfStream_constructs() {
-		OcrInput input = OcrInput.pdf(new ByteArrayInputStream(new byte[]{0x25, 0x50, 0x44, 0x46}));
-		assertEquals(OcrInput.Source.STREAM, input.source());
-	}
-
-	@Test
 	void ocrResources_toBytesRoundTripsAllSources() throws IOException {
 		byte[] original = {1, 2, 3, 4};
 		// BYTES
