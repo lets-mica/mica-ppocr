@@ -60,7 +60,6 @@ import java.util.List;
  * 渲染通道创建的 Mat 由本类自行 release；{@code engine.runMat} 不持有 Mat 引用。
  */
 public class PdfOcrSupport {
-
 	private final PPOcrV6Engine engine;
 	private final PdfOcrConfig config;
 	private final PdfTextExtractor extractor = new PdfTextExtractor();

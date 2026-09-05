@@ -17,6 +17,7 @@
 package net.dreamlu.mica.ai.ppocr.loader;
 
 import lombok.experimental.UtilityClass;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,11 +38,9 @@ import java.util.ServiceLoader;
  * {@link ServiceConfigurationError}（如某实现类缺失）会按 ServiceLoader 默认行为抛出；
  * 这里在初始化时记录警告但不中断，方便测试 / 部分环境降级。
  */
+@Slf4j
 @UtilityClass
 public class InputLoaders {
-
-	private static final Logger log = LoggerFactory.getLogger(InputLoaders.class);
-
 	private static volatile List<InputLoader> cached;
 
 	/**

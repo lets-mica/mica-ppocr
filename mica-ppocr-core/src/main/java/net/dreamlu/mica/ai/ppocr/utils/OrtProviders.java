@@ -24,9 +24,7 @@ import lombok.experimental.UtilityClass;
 import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 
-import java.util.ArrayList;
-import java.util.EnumSet;
-import java.util.List;
+import java.util.*;
 
 /**
  * ONNX Runtime execution provider 自动选择 + 注册。
@@ -67,11 +65,11 @@ public class OrtProviders {
 	 * provider 名称 → 注册器。CPU 不需要额外注册，跳过；
 	 * 新增 EP（如 TensorRT / DirectML）时只在这里加一行。
 	 */
-	private final java.util.Map<String, EpRegistrar> REGISTRARS = new java.util.HashMap<>();
+	private final Map<String, EpRegistrar> REGISTRARS = new HashMap<>();
 
 	static {
 		REGISTRARS.put("CUDAExecutionProvider", opts -> opts.addCUDA(0));
-		REGISTRARS.put("CoreMLExecutionProvider", opts -> opts.addCoreML());
+		REGISTRARS.put("CoreMLExecutionProvider", SessionOptions::addCoreML);
 	}
 
 	/**

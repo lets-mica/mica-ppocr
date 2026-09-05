@@ -70,7 +70,6 @@ import java.util.Map;
  */
 @AutoService(InputLoader.class)
 public class PdfInputLoader implements InputLoader {
-
 	private final PdfOcrConfig config;
 
 	public PdfInputLoader() {
