@@ -28,11 +28,6 @@ import lombok.ToString;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
-import net.dreamlu.mica.ai.ppocr.loader.InputLoader;
-import net.dreamlu.mica.ai.ppocr.loader.InputLoaders;
-import net.dreamlu.mica.ai.ppocr.loader.LoaderContext;
-import net.dreamlu.mica.ai.ppocr.loader.OcrInput;
-import net.dreamlu.mica.ai.ppocr.loader.Page;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfPageResult;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfTextExtractor;
@@ -809,73 +804,6 @@ public final class PPOcrV6Engine implements Closeable {
 		 * 每条文本的置信度
 		 */
 		private final float[] scores;
-	}
-
-	// ==================================================================
-	// SPI 入口：run(OcrInput) / runPages(OcrInput)
-	// ==================================================================
-
-	/**
-	 * 把 PPOcrV6Config 暴露给 loader（用于 PDF 的 DPI / 线程数等）。
-	 */
-	private LoaderContext newLoaderContext() {
-		return new LoaderContext(this, config, new java.util.HashMap<>());
-	}
-
-	/**
-	 * 完整 OCR 流程的统一入口：图片 / 未来扩展格式（TIFF / Word）都走这里。
-	 *
-	 * <p>内部用 {@link InputLoaders} 选 loader 解析为页列表，逐页跑 {@code runMat}。
-	 * 单页输入（如图片）返回 1 条结果。
-	 *
-	 * @param input 输入
-	 * @return per-page 结果列表（至少 1 条）
-	 * @throws IllegalArgumentException input 为 null / 无可用 loader
-	 * @throws IllegalStateException    引擎已关闭
-	 * @throws IOException              loader 解析失败
-	 */
-	public List<PageResult> runPages(OcrInput input) throws IOException {
-		requireOpen();
-		if (input == null) {
-			throw new IllegalArgumentException("input must not be null");
-		}
-		InputLoader loader = InputLoaders.find(input);
-		if (loader == null) {
-			throw new IllegalArgumentException("no InputLoader can handle " + input);
-		}
-		List<Page> pages = loader.load(input, newLoaderContext());
-		List<PageResult> results = new ArrayList<>(pages.size());
-		for (Page page : pages) {
-			Mat mat = decodeMat(page.bytes());
-			try {
-				List<PPOcrV6Result> pageResults = runMat(mat);
-				results.add(new PageResult(page.index(), pageResults, page.meta()));
-			} finally {
-				mat.release();
-			}
-		}
-		return results;
-	}
-
-	/**
-	 * 完整 OCR 流程：单页返回。
-	 *
-	 * @param input 输入
-	 * @return 文本框列表
-	 * @throws IllegalArgumentException input 为 null / 无可用 loader
-	 * @throws IllegalStateException    引擎已关闭
-	 * @throws IOException              loader 解析失败
-	 */
-	public List<PPOcrV6Result> run(OcrInput input) throws IOException {
-		List<PageResult> pages = runPages(input);
-		if (pages.size() == 1) {
-			return pages.get(0).results();
-		}
-		List<PPOcrV6Result> flat = new ArrayList<>();
-		for (PageResult page : pages) {
-			flat.addAll(page.results());
-		}
-		return flat;
 	}
 
 	// ==================================================================
