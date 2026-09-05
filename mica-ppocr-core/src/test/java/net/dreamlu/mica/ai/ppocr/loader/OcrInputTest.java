@@ -60,7 +60,9 @@ class OcrInputTest {
 	void imagePath_acceptsPathObject() {
 		OcrInput input = OcrInput.image(Paths.get("a/b/c.png"));
 		assertEquals(OcrInput.Source.PATH, input.source());
-		assertEquals("a\\b\\c.png", input.path());
+		// 平台无关：断言 Path 转 String 后等于 Path.toString()，
+		// 避免硬编码 Windows 的 "\\" 或 Linux 的 "/"
+		assertEquals(Paths.get("a/b/c.png").toString(), input.path());
 	}
 
 	@Test

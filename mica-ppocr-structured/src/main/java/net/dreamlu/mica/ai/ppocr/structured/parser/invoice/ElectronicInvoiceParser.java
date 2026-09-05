@@ -349,6 +349,58 @@ public class ElectronicInvoiceParser {
 				}
 			}
 		}
+
+		// 兜底校验：OCR 通道常见问题 — 表格合并单元格上"59976.00"被误识为
+		// "593.82"（与紧邻的税额 ¥593.82 串位），导致小写金额丢万位。
+		// 中文大写金额是结构化表达，OCR 几乎无误识，因此以大写反推的小写为基准
+		// 校验 OCR 识别结果：金额绝对差 ≥ 1 元（整数部分失配）视为 OCR 误识，
+		// 用大写反推值覆盖；角分微小差异（如 21.79 vs 21.80）保留 OCR 值。
+		if (r.getTotalAmountUpper() != null && r.getTotalAmountLower() != null) {
+			String lowerFromUpper = UpperMoneyConverter.toLower(r.getTotalAmountUpper());
+			if (lowerFromUpper != null && !lowerFromUpper.equals(r.getTotalAmountLower())) {
+				long yuanA = yuanOf(lowerFromUpper);
+				long yuanB = yuanOf(r.getTotalAmountLower());
+				if (yuanA >= 0 && yuanB >= 0 && Math.abs(yuanA - yuanB) >= 1) {
+					// 大写反推值与 OCR 小写差异 ≥ 1 元 → OCR 通道丢万位等严重误识，
+					// 用反推值覆盖，并保留原小写的 ¥/￥ 前缀与文本层格式对齐
+					String prefix = yuanPrefix(r.getTotalAmountLower());
+					String replaced = prefix + lowerFromUpper;
+					r.setTotalAmountLower(replaced);
+					// 注：原 box 已通过 setTotalAmountLower 上面的 applyFieldBox 登记过，
+					// 这里仅覆盖 value，不再重复绑定新 box（避免覆盖原 OCR 坐标）
+				}
+			}
+		}
+	}
+
+	/**
+	 * 提取小写金额的整数部分（元），用于大小写校验。
+	 *
+	 * @return 整数元；格式异常返回 -1
+	 */
+	private static long yuanOf(String lower) {
+		if (lower == null) return -1;
+		String s = lower.startsWith("¥") || lower.startsWith("￥") ? lower.substring(1) : lower;
+		int dot = s.indexOf('.');
+		String intPart = dot < 0 ? s : s.substring(0, dot);
+		if (intPart.isEmpty()) return 0;
+		try {
+			return Long.parseLong(intPart);
+		} catch (NumberFormatException e) {
+			return -1;
+		}
+	}
+
+	/**
+	 * 从小写金额中提取货币符前缀（¥/￥/?），无前缀返回空串。
+	 */
+	private static String yuanPrefix(String lower) {
+		if (lower == null || lower.isEmpty()) return "¥";
+		char first = lower.charAt(0);
+		if (first == '¥' || first == '￥' || first == '?') {
+			return "¥";
+		}
+		return "¥";
 	}
 
 	/**
