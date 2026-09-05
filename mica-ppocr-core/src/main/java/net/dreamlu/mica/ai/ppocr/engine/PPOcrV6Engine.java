@@ -28,6 +28,11 @@ import lombok.ToString;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
+import net.dreamlu.mica.ai.ppocr.loader.InputLoader;
+import net.dreamlu.mica.ai.ppocr.loader.InputLoaders;
+import net.dreamlu.mica.ai.ppocr.loader.LoaderContext;
+import net.dreamlu.mica.ai.ppocr.loader.OcrInput;
+import net.dreamlu.mica.ai.ppocr.loader.Page;
 import net.dreamlu.mica.ai.ppocr.postprocessor.CtcLabelDecoder;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DbPostProcessor;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DocOrientationPostprocessor;
@@ -94,6 +99,7 @@ public final class PPOcrV6Engine implements Closeable {
 	private final DocOrientationPreprocessor docOriPre;
 	private final DocOrientationPostprocessor docOriPost;
 	private final boolean docOriEnabled;
+	private final PPOcrV6Config config;
 
 	private boolean closed = false;
 
@@ -120,40 +126,18 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			requirePath(config.getDocOrientationModelPath(), "docOrientationModelPath");
 		}
-		String[] providers = OrtProviders.resolve(!config.isPreferAccelerator());
-		log.info("ONNX Runtime provider: {}", String.join(",", providers));
 		this.env = OrtEnvironment.getEnvironment();
 
 		OrtSession detSess = null;
 		OrtSession recSess = null;
 		OrtSession docOriSess = null;
 		try (OrtSession.SessionOptions opts = new OrtSession.SessionOptions()) {
-			// issue #14：OCR 输入分辨率随图片变化，CPU arena / 内存模式优化
-			// 高水位会随新 shape 持续抬升且不归还 OS，内存受限环境（Docker）
-			// 表现为内存持续增长直至 OOM。默认关闭两项：临时内存用完即释放，
-			// 吞吐损失约 10%（可配置开启，仅当输入分辨率固定且追求极致吞吐时建议）。
-			try {
-				opts.setCPUArenaAllocator(config.isEnableCpuMemArena());
-			} catch (OrtException e) {
-				log.warn("设置 CPU memory arena 失败，使用默认值: {}", e.getMessage());
-			}
-			try {
-				opts.setMemoryPatternOptimization(config.isEnableMemoryPattern());
-			} catch (OrtException e) {
-				log.warn("设置 memory pattern 失败，使用默认值: {}", e.getMessage());
-			}
-			try {
-				opts.setExecutionMode(config.getExecMode());
-			} catch (OrtException e) {
-				log.warn("设置执行模式失败，使用默认值: {}", e.getMessage());
-			}
-			try {
-				opts.setIntraOpNumThreads(Math.max(1, config.getIntraOpNumThreads()));
-				opts.setInterOpNumThreads(Math.max(1, config.getInterOpNumThreads()));
-			} catch (OrtException e) {
-				log.warn("设置线程数失败，使用默认值: {}", e.getMessage());
-			}
-
+			// provider 选择 + SessionOptions 通用配置（arena / memory pattern /
+			// exec mode / 线程数）+ 加速 EP 注册，全部下沉到 OrtProviders.apply()。
+			// 任何一步失败都只 warn 并保留 ORT 默认值，session 仍可创建。
+			// issue #14：OCR 输入分辨率随图片变化，CPU arena / 内存模式默认关闭，
+			// 避免 arena 高水位持续抬升导致 Docker OOM，吞吐损失约 10%。
+			OrtProviders.apply(opts, config);
 			try {
 				detSess = env.createSession(ModelResourceLoader.load(config.getDetModelPath()), opts);
 				recSess = env.createSession(ModelResourceLoader.load(config.getRecModelPath()), opts);
@@ -184,6 +168,7 @@ public final class PPOcrV6Engine implements Closeable {
 			this.recBatchSize = config.getRecBatchSize();
 			this.docOriPre = new DocOrientationPreprocessor();
 			this.docOriPost = new DocOrientationPostprocessor(config.getDocOrientationThresh());
+			this.config = config;
 			if (docOriEnabled) {
 				this.docOriInputName = docOriSession.getInputNames().iterator().next();
 				this.docOriOutputName = docOriSession.getOutputNames().iterator().next();
@@ -319,7 +304,8 @@ public final class PPOcrV6Engine implements Closeable {
 	@Override
 	public String toString() {
 		return "PPOcrV6Engine(det=" + detPre + ", rec=" + recPre
-			+ ", vocab=" + recPost.vocabSize() + ", closed=" + closed + ")";
+			+ ", vocab=" + recPost.vocabSize() + ", docOri=" + (docOriEnabled ? "enabled" : "disabled")
+			+ ", closed=" + closed + ")";
 	}
 
 	/**
@@ -811,5 +797,77 @@ public final class PPOcrV6Engine implements Closeable {
 		 * 每条文本的置信度
 		 */
 		private final float[] scores;
+	}
+
+	// ==================================================================
+	// SPI 入口：run(OcrInput) / runPages(OcrInput)
+	// ==================================================================
+
+	/**
+	 * 把 PPOcrV6Config 暴露给 loader（用于 PDF 的 DPI / 线程数等）。
+	 */
+	private LoaderContext newLoaderContext() {
+		return new LoaderContext(this, config, new java.util.HashMap<>());
+	}
+
+	/**
+	 * 完整 OCR 流程的统一入口：图片 / PDF / 未来扩展格式（TIFF / Word）都走这里。
+	 *
+	 * <p>内部用 {@link InputLoaders} 选 loader 解析为页列表，逐页跑 {@code runMat}。
+	 * 单页输入（如图片）返回 1 条结果。
+	 *
+	 * @param input 输入
+	 * @return per-page 结果列表（至少 1 条）
+	 * @throws IllegalArgumentException input 为 null / 无可用 loader
+	 * @throws IllegalStateException    引擎已关闭
+	 * @throws IOException              loader 解析失败
+	 */
+	public List<PageResult> runPages(OcrInput input) throws IOException {
+		requireOpen();
+		if (input == null) {
+			throw new IllegalArgumentException("input must not be null");
+		}
+		InputLoader loader = InputLoaders.find(input);
+		if (loader == null) {
+			throw new IllegalArgumentException(
+				"no InputLoader can handle " + input
+					+ "; for PDF input please ensure mica-ppocr-pdf is on the classpath");
+		}
+		List<Page> pages = loader.load(input, newLoaderContext());
+		List<PageResult> results = new ArrayList<>(pages.size());
+		for (Page page : pages) {
+			Mat mat = decodeMat(page.bytes());
+			try {
+				List<PPOcrV6Result> pageResults = runMat(mat);
+				results.add(new PageResult(page.index(), pageResults, page.meta()));
+			} finally {
+				mat.release();
+			}
+		}
+		return results;
+	}
+
+	/**
+	 * 完整 OCR 流程：单页返回。
+	 *
+	 * <p>多页输入（PDF）会把所有页的 {@link PPOcrV6Result} 展平成一条长列表。
+	 * 需要区分页时改用 {@link #runPages(OcrInput)}。
+	 *
+	 * @param input 输入
+	 * @return 文本框列表
+	 * @throws IllegalArgumentException input 为 null / 无可用 loader
+	 * @throws IllegalStateException    引擎已关闭
+	 * @throws IOException              loader 解析失败
+	 */
+	public List<PPOcrV6Result> run(OcrInput input) throws IOException {
+		List<PageResult> pages = runPages(input);
+		if (pages.size() == 1) {
+			return pages.get(0).results();
+		}
+		List<PPOcrV6Result> flat = new ArrayList<>();
+		for (PageResult page : pages) {
+			flat.addAll(page.results());
+		}
+		return flat;
 	}
 }
