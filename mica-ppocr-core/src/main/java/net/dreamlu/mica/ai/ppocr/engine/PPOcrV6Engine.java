@@ -154,6 +154,20 @@ public final class PPOcrV6Engine implements Closeable {
 				log.warn("设置线程数失败，使用默认值: {}", e.getMessage());
 			}
 
+			// providers 解析后必须显式注册到 SessionOptions，
+			// 否则 prefer-accelerator=true 时只打印日志、GPU 永不生效。
+			try {
+				if (providers.length > 0 && "CUDAExecutionProvider".equals(providers[0])) {
+					opts.addCUDA(0);
+					log.info("CUDAExecutionProvider 已注册到 SessionOptions (addCUDA(0))");
+				} else if (providers.length > 0 && "CoreMLExecutionProvider".equals(providers[0])) {
+					opts.addCoreML();
+					log.info("CoreMLExecutionProvider 已注册到 SessionOptions");
+				}
+			} catch (OrtException e) {
+				log.warn("注册加速 provider 失败，回退 CPU: {}", e.getMessage());
+			}
+
 			try {
 				detSess = env.createSession(ModelResourceLoader.load(config.getDetModelPath()), opts);
 				recSess = env.createSession(ModelResourceLoader.load(config.getRecModelPath()), opts);
