@@ -23,6 +23,21 @@
             <groupId>net.dreamlu</groupId>
             <artifactId>mica-ppocr-structured</artifactId>
         </dependency>
+        <!--
+            mica-ppocr-pdf 默认引入 solon-plugin：
+            - mica-ppocr-pdf 自身把 pdfbox 标 optional=true（防止传递污染 PDF 模块外的下游）
+            - solon-plugin 显式拉 pdfbox（与 spring-boot-starter 行为对齐）：
+                启动时 solon 的 bean 扫描会按引用解析类图，pdfbox 必须在插件自身 classpath
+            - 装配期由 PdfAutoConfiguration 的 @Condition(onClass=PdfOcrSupport) 二次保护
+        -->
+        <dependency>
+            <groupId>net.dreamlu</groupId>
+            <artifactId>mica-ppocr-pdf</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.noear</groupId>
             <artifactId>solon</artifactId>

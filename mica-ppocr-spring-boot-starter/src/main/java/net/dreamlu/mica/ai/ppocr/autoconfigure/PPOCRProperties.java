@@ -162,4 +162,44 @@ public class PPOCRProperties {
 	 * 建议保持关闭。关闭后每次推理按需分配 / 释放临时张量，内存峰值可控。
 	 */
 	private boolean enableMemoryPattern = false;
+
+	/**
+	 * PDF 通道配置（仅当 classpath 含 mica-ppocr-pdf 时生效）。
+	 *
+	 * <p>对应 yml：
+	 * <pre>
+	 * mica:
+	 *   ai:
+	 *     ppocr:
+	 *       pdf:
+	 *         render-dpi: 200
+	 *         min-text-chars: 10
+	 *         min-readable-ratio: 0.6
+	 *         force-ocr: false
+	 * </pre>
+	 */
+	private Pdf pdf = new Pdf();
+
+	/**
+	 * PDF 通道子配置。
+	 */
+	@Data
+	public static class Pdf {
+		/**
+		 * PDF 渲染通道 DPI（默认 200）。调高提升小字精度，代价是渲染耗时与内存。
+		 */
+		private int renderDpi = 200;
+		/**
+		 * 文本层判定的最少字符数。低于此值视为扫描件，强制走 OCR 通道。
+		 */
+		private int minTextChars = 10;
+		/**
+		 * 文本层判定中可读字符的最低占比（0~1）。低于此值视为扫描件，强制走 OCR 通道。
+		 */
+		private double minReadableRatio = 0.6;
+		/**
+		 * 强制走 OCR 通道（跳过文本层判定与抽文）。用于已知是扫描件但 PDF 仍被标了文本层的场景。
+		 */
+		private boolean forceOcr = false;
+	}
 }

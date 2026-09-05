@@ -30,6 +30,7 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.taxi.TaxiReceiptParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.train.TrainTicketParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.vehicle.VehicleLicenseParser;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
+import org.springframework.beans.factory.NoSuchBeanDefinitionException;
 import org.springframework.context.ApplicationContext;
 
 import java.io.File;
@@ -74,8 +75,17 @@ import java.util.*;
  */
 public final class PPOcrTemplate {
 
+	private final ApplicationContext context;
 	private final PPOcrV6Engine engine;
 	private final Map<Class<?>, BaseStructuredParser<?>> parsers;
+	/**
+	 * PDF 通道门面（懒加载，按需反射查 bean）；PDF 模块缺失时为 null。
+	 *
+	 * <p>用 {@link Object} 持有是为了避免 PPOcrTemplate 对
+	 * {@code net.dreamlu.mica.ai.ppocr.pdf.PdfOcrSupport} 产生编译期硬依赖。
+	 * 反射找 bean 时若 ClassNotFoundException 出现，认为 PDF 模块不在 classpath。
+	 */
+	private volatile Object pdfSupport;
 
 	/**
 	 * 构造模板，传入已初始化的推理引擎与若干结构化解析器。
@@ -87,6 +97,7 @@ public final class PPOcrTemplate {
 	 * @throws IllegalArgumentException engine 为 null、parsers 为 null 或空、元素为 null
 	 */
 	public PPOcrTemplate(ApplicationContext context, PPOcrV6Engine engine) {
+		this.context = Objects.requireNonNull(context, "ApplicationContext must not be null");
 		this.engine = Objects.requireNonNull(engine, "PPOcrV6Engine must not be null");
 		Map<Class<?>, BaseStructuredParser<?>> map = new LinkedHashMap<>();
 		for (BaseStructuredParser<?> parser : context.getBeansOfType(BaseStructuredParser.class).values()) {
@@ -286,4 +297,60 @@ public final class PPOcrTemplate {
 	public PddLuckyBagParser pddLuckyBag() {
 		return get(PddLuckyBagParser.class);
 	}
+
+	// ==================================================================
+	// PDF 通道：懒加载，PDF 模块缺失时返回 null（不强引用 PdfOcrSupport）
+	// ==================================================================
+
+	/**
+	 * PDF 双通道门面。
+	 *
+	 * <p>仅当 classpath 中存在 {@code mica-ppocr-pdf}（且容器内已注册
+	 * {@code pdfOcrSupport} Bean）时返回非 null；否则返回 null，调用方需先判空。
+	 *
+	 * <p>用反射按类型查 bean，避免本类编译期依赖 {@code net.dreamlu.mica.ai.ppocr.pdf.PdfOcrSupport}。
+	 * 首次调用会做一次反射 + 容器查找，结果缓存到 {@link #pdfSupport}，后续直接返回。
+	 *
+	 * <p>典型用法（{@code mica-ppocr-pdf} 引入时）：
+	 * <pre>
+	 * PPOcrSupport pdf = ppocr.pdf();
+	 * if (pdf != null) {
+	 *     List&lt;PdfPageResult&gt; pages = pdf.run(file.getBytes());
+	 * }
+	 * </pre>
+	 *
+	 * @return PdfOcrSupport 实例或 null（PDF 模块缺失 / bean 未注册）
+	 */
+	public Object pdf() {
+		Object cached = pdfSupport;
+		if (cached != null) {
+			return cached;
+		}
+		synchronized (this) {
+			if (pdfSupport != null) {
+				return pdfSupport;
+			}
+			Class<?> supportClass;
+			try {
+				supportClass = Class.forName("net.dreamlu.mica.ai.ppocr.pdf.PdfOcrSupport");
+			} catch (ClassNotFoundException e) {
+				// mica-ppocr-pdf 不在 classpath，缓存 sentinel null 避免重复反射
+				pdfSupport = VOID;
+				return null;
+			}
+			try {
+				Object bean = context.getBean(supportClass);
+				pdfSupport = bean;
+				return bean;
+			} catch (NoSuchBeanDefinitionException e) {
+				pdfSupport = VOID;
+				return null;
+			}
+		}
+	}
+
+	/**
+	 * 哨兵对象，标识已确认"PDF 不在 classpath / bean 未注册"，避免后续重复反射。
+	 */
+	private static final Object VOID = new Object();
 }
