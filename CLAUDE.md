@@ -39,7 +39,7 @@ When changing numeric logic, verify against the Python implementation rather tha
 mica-ppocr/                     ← parent pom (packaging=pom)
 ├── mica-ppocr-core/            ← 核心引擎 + PDF 双通道，零 Spring 依赖
 │   └── src/main/java/net/dreamlu/mica/ai/ppocr/
-│       ├── engine/PPOcrV6Engine.java     ← run/runPdf/runMat/runPages 等入口
+│       ├── engine/PPOcrV6Engine.java     ← run/runMat 等入口（自动嗅探 PDF）
 │       ├── engine/PPOcrV6Result.java
 │       ├── config/PPOcrV6Config.java
 │       ├── preprocessor/DetectionPreprocessor.java, RecognitionPreprocessor.java

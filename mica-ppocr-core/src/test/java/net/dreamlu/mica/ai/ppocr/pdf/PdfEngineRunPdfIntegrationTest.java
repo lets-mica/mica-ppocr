@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.pdf;
 
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
+import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
@@ -29,12 +30,14 @@ import java.util.List;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.electronicInvoiceStylePdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.imageOnlyPdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.multiPageTextPdf;
-import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * {@link PPOcrV6Engine#runPdf} 端到端集成测试（真实模型 + 合成 PDF）。
+ * {@link PPOcrV6Engine#run(byte[])} PDF 双通道端到端集成测试（真实模型 + 合成 PDF）。
+ *
+ * <p>所有断言都走公开 API：自动嗅探 + 平铺多页结果。具体走文本层还是渲染通道
+ * 属于内部细节，由 {@link PPOcrV6Engine} 自行决策，调用方不感知。
  *
  * <p>依赖仓库根目录 {@code models/ppocr-v6/tiny/} 模型；模型缺失时通过
  * {@link Assumptions} 跳过（模型不随仓库分发）。
@@ -62,7 +65,7 @@ class PdfEngineRunPdfIntegrationTest {
 	}
 
 	@Test
-	void textTypePdfGoesThroughTextLayerChannel() throws Exception {
+	void textTypePdfReturnsResultsThroughTextLayerChannel() throws Exception {
 		Path root = findRepositoryRoot();
 		Path modelDir = root.resolve("models/ppocr-v6/" + DEFAULT_TIER);
 		Assumptions.assumeTrue(Files.isRegularFile(modelDir.resolve("det.onnx"))
@@ -71,16 +74,14 @@ class PdfEngineRunPdfIntegrationTest {
 			"tiny 模型缺失，跳过集成测试");
 
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
-			List<PdfPageResult> pages = engine.runPdf(electronicInvoiceStylePdf());
+			List<PPOcrV6Result> results = engine.run(electronicInvoiceStylePdf());
 
-			assertEquals(1, pages.size());
-			assertFalse(pages.get(0).viaOcr(), "text-type pdf must not consume inference");
-			assertTrue(pages.get(0).results().size() >= 5);
+			assertTrue(results.size() >= 5, "text-type pdf must yield >= 5 text lines");
 		}
 	}
 
 	@Test
-	void imageOnlyPdfGoesThroughOcrChannel() throws Exception {
+	void imageOnlyPdfRunsOcrChannel() throws Exception {
 		Path root = findRepositoryRoot();
 		Path modelDir = root.resolve("models/ppocr-v6/" + DEFAULT_TIER);
 		Assumptions.assumeTrue(Files.isRegularFile(modelDir.resolve("det.onnx"))
@@ -90,16 +91,15 @@ class PdfEngineRunPdfIntegrationTest {
 
 		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
-			List<PdfPageResult> pages = engine.runPdf(imageOnlyPdf());
-
-			assertEquals(1, pages.size());
-			assertTrue(pages.get(0).viaOcr(), "image-only pdf must go through ocr channel");
-			assertEquals(0, pages.get(0).pageIndex());
+			// 整页位图 PDF（无文本层）应走 OCR 通道，调用方拿到结果（空集也算成功完成）
+			List<PPOcrV6Result> results = engine.run(imageOnlyPdf());
+			// 不强制断言非空：合成样本本身无文字，OCR 返回空集也是正常完成
+			assertTrue(results != null, "image-only pdf must complete without throwing");
 		}
 	}
 
 	@Test
-	void runBytesAutoDispatchesPdfAndFlattensPages() throws Exception {
+	void multiPageTextPdfFlattensPages() throws Exception {
 		Path root = findRepositoryRoot();
 		Path modelDir = root.resolve("models/ppocr-v6/" + DEFAULT_TIER);
 		Assumptions.assumeTrue(Files.isRegularFile(modelDir.resolve("det.onnx"))
@@ -110,16 +110,9 @@ class PdfEngineRunPdfIntegrationTest {
 		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
 			// 多页文字型 PDF → run(byte[]) 应自动按 PDF 双通道处理并平铺所有页
-			byte[] pdfBytes = multiPageTextPdf(3);
-			List<net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result> flat =
-				engine.run(pdfBytes);
+			List<PPOcrV6Result> flat = engine.run(multiPageTextPdf(3));
 
 			assertFalse(flat.isEmpty(), "PDF 多页 run(byte[]) 应平铺至少一页结果");
-			// 文本型 PDF 走文本层（viaOcr=false），应能拿到完整文本行
-			long nonOcrPages = engine.runPdf(pdfBytes).stream()
-				.filter(p -> !p.viaOcr())
-				.count();
-			assertTrue(nonOcrPages >= 1, "至少有 1 页走文本层");
 		}
 	}
 

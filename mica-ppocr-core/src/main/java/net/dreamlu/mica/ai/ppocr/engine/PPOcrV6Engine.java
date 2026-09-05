@@ -243,32 +243,19 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 从 Path 加载 BGR Mat。
 	 *
-	 * <p>默认 FileSystem 走 native OpenCV 读取（省内存，不经过 JVM heap 中转）；
-	 * 非默认 FileSystem（ZIP / JIMFS / 内存 FS 等）自动退回 {@code Files.readAllBytes}。
+	 * <p>默认 FileSystem 走 native OpenCV 读取（省内存，不经过 JVM heap 中转）。
 	 *
 	 * @param imagePath 图片路径
 	 * @return BGR Mat（由调用方负责 release）
 	 * @throws IllegalArgumentException 路径加载失败或解码失败
 	 */
 	private static Mat loadMat(Path imagePath) {
-		try {
-			// 默认 FileSystem → native 读取 OpenCV
-			Mat mat = Imgcodecs.imread(imagePath.toFile().getAbsolutePath());
-			if (mat.empty()) {
-				mat.release();
-				throw new IllegalArgumentException("Failed to load image: " + imagePath);
-			}
-			return mat;
-		} catch (UnsupportedOperationException ignore) {
-			// 非默认 FileSystem：退回字节流
-			byte[] bytes;
-			try {
-				bytes = Files.readAllBytes(imagePath);
-			} catch (IOException e) {
-				throw new UncheckedIOException(e);
-			}
-			return decodeMat(bytes);
+		Mat mat = Imgcodecs.imread(imagePath.toFile().getAbsolutePath());
+		if (mat.empty()) {
+			mat.release();
+			throw new IllegalArgumentException("Failed to load image: " + imagePath);
 		}
+		return mat;
 	}
 
 	private void closeOnInitFailure(Exception cause) {
@@ -354,13 +341,11 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
 	 *
-	 * <p>兼容非默认文件系统的 {@link Path}（如 ZIP/JIMFS 等）：优先走 native 文件读取，
-	 * 不支持的 FileSystem 自动退回 {@code Files.readAllBytes}。
-	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
 	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
+	 * @throws IllegalArgumentException 路径为 null、文件不存在或解码失败
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public List<PPOcrV6Result> run(Path imagePath) {
@@ -369,15 +354,19 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 		// 默认 FileSystem：先读头部字节嗅探 PDF，避免 OpenCV 解析 PDF 失败
 		if (imagePath.getFileSystem().equals(FileSystems.getDefault())) {
+			byte[] head;
 			try {
-				byte[] head = readHeadBytes(imagePath, 1024 + 8);
-				if (PdfMagicDetector.isPdf(head)) {
-					return runPdf(imagePath).stream()
-						.flatMap(page -> page.results().stream())
-						.collect(Collectors.toList());
-				}
+				head = readHeadBytes(imagePath, 1024 + 8);
 			} catch (IOException ignore) {
 				// 嗅探失败时按图片走（保持向后兼容）
+				head = null;
+			}
+			if (head != null && PdfMagicDetector.isPdf(head)) {
+				try {
+					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), PdfOcrConfig.defaults()));
+				} catch (IOException e) {
+					throw new UncheckedIOException(e);
+				}
 			}
 		}
 		Mat mat = loadMat(imagePath);
@@ -394,8 +383,8 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 * 典型场景：Spring Boot 上传 {@code MultipartFile.getBytes()}。
 	 *
-	 * <p>自动嗅探输入：字节流以 {@code %PDF-} 魔数开头时，自动转发到 {@link #runPdf(byte[])}
-	 * 并平铺所有页的文本框列表。其它格式按图片走。
+	 * <p>自动嗅探输入：字节流以 {@code %PDF-} 魔数开头时，自动按 PDF 双通道处理并
+	 * 平铺所有页的文本框列表。其它格式按图片走。
 	 *
 	 * <p>PDF 解析失败时抛 {@link UncheckedIOException}（unchecked），避免强制 try-catch。
 	 *
@@ -409,9 +398,7 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 		if (PdfMagicDetector.isPdf(imgBytes)) {
 			try {
-				return runPdf(imgBytes).stream()
-					.flatMap(page -> page.results().stream())
-					.collect(Collectors.toList());
+				return flattenPdfPages(runPdfBytes(imgBytes, PdfOcrConfig.defaults()));
 			} catch (IOException e) {
 				throw new UncheckedIOException(e);
 			}
@@ -512,11 +499,8 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 文本检测（仅检测，不识别）。
 	 *
-	 * <p>兼容非默认文件系统的 {@link Path}（如 ZIP/JIMFS 等）。
-	 *
 	 * @param imagePath 图片路径
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
-	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public DetectResult detect(Path imagePath) {
 		if (imagePath == null) {
@@ -710,10 +694,17 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			return results;
 		} finally {
-			for (Mat crop : crops) {
-				if (crop != null) {
-					crop.release();
-				}
+			releaseCrops(crops);
+		}
+	}
+
+	/**
+	 * 释放裁剪 Mat 列表中所有非空元素。允许列表中含 null（来自 {@link CropUtil#cropByPolys} 的无效裁剪）。
+	 */
+	private static void releaseCrops(List<Mat> crops) {
+		for (Mat crop : crops) {
+			if (crop != null) {
+				crop.release();
 			}
 		}
 	}
@@ -897,70 +888,21 @@ public final class PPOcrV6Engine implements Closeable {
 
 	// ==================================================================
 	// PDF 双通道入口：每页文本层命中走坐标抽取；否则降级渲染 + OCR
+	// 全部为 private —— 公开 API 只走 run(...) 系列，PDF 自动嗅探转发到此处
 	// ==================================================================
 
 	/**
-	 * PDF 双通道解析（默认配置）。
+	 * PDF 双通道解析（核心入口）。
 	 *
-	 * @param pdfBytes PDF 字节
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
-	 */
-	public List<PdfPageResult> runPdf(byte[] pdfBytes) throws IOException {
-		return runPdf(pdfBytes, PdfOcrConfig.defaults());
-	}
-
-	/**
-	 * PDF 双通道解析（默认配置）。
-	 *
-	 * @param pdfPath PDF 路径
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
-	 */
-	public List<PdfPageResult> runPdf(String pdfPath) throws IOException {
-		if (pdfPath == null || pdfPath.isEmpty()) {
-			throw new IllegalArgumentException("pdfPath must not be empty");
-		}
-		return runPdf(Files.readAllBytes(CollUtil.pathOf(pdfPath)));
-	}
-
-	/**
-	 * PDF 双通道解析（默认配置）。
-	 *
-	 * @param pdfPath PDF 路径
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
-	 */
-	public List<PdfPageResult> runPdf(Path pdfPath) throws IOException {
-		if (pdfPath == null) {
-			throw new IllegalArgumentException("pdfPath must not be null");
-		}
-		return runPdf(Files.readAllBytes(pdfPath));
-	}
-
-	/**
-	 * PDF 双通道解析（默认配置）。
-	 *
-	 * @param in PDF 输入流（流由调用方关闭，本方法只读到 EOF）
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
-	 */
-	public List<PdfPageResult> runPdf(InputStream in) throws IOException {
-		if (in == null) {
-			throw new IllegalArgumentException("InputStream must not be null");
-		}
-		return runPdf(CollUtil.readAllBytes(in));
-	}
-
-	/**
-	 * PDF 双通道解析。
+	 * <p>按 {@link PdfOcrConfig} 配置：每页先尝试文本层坐标抽取，
+	 * 文本质量不达标时降级到渲染 + OCR。
 	 *
 	 * @param pdfBytes PDF 字节
 	 * @param config   PDF 配置（不可为 null）
 	 * @return per-page 结果列表
 	 * @throws IOException PDF 解析失败
 	 */
-	public List<PdfPageResult> runPdf(byte[] pdfBytes, PdfOcrConfig config) throws IOException {
+	private List<PdfPageResult> runPdfBytes(byte[] pdfBytes, PdfOcrConfig config) throws IOException {
 		if (config == null) {
 			throw new IllegalArgumentException("config must not be null");
 		}
@@ -974,6 +916,15 @@ public final class PPOcrV6Engine implements Closeable {
 		try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
 			return runPdfPages(doc, config);
 		}
+	}
+
+	/**
+	 * 将 PDF 多页结果平铺为单层 {@link PPOcrV6Result} 列表（按页顺序拼接）。
+	 */
+	private static List<PPOcrV6Result> flattenPdfPages(List<PdfPageResult> pages) {
+		return pages.stream()
+			.flatMap(page -> page.results().stream())
+			.collect(Collectors.toList());
 	}
 
 	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config) throws IOException {
