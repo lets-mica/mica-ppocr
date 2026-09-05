@@ -210,6 +210,8 @@ npx skills add lets-mica/mica-ppocr
 
 安装后，当你提出"加个 XX 证件 / 票据解析器"、"自定义结构化解析"等需求时，AI 会自动加载该 skill 给出符合项目规范的实现。
 
+针对**已有解析器的批量调优**场景（用户提供图片/PDF 目录，定位哪些字段 F1 偏低并自动给出最小局部修复），内置 [`ocr-parser-optimizer`](.agents/skills/ocr-parser-optimizer/SKILL.md) skill：跑批 → 9 类失败模式诊断（F1 label 残缺 / F3 值截断 / F5 标签值合并框 等） → LabelMatcher / 正则 / 几何阈值最小改动 → 再验证，输出 `optimization-reports/<parser>-<timestamp>.md` 对比报告。提"调优 / 修一下 / 看哪些样本解析不对"等需求时会自动加载。
+
 ---
 
 ## 6. Spring Boot Starter
