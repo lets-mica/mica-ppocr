@@ -105,7 +105,6 @@ public final class PPOcrV6Engine implements Closeable {
 	private final DocOrientationPreprocessor docOriPre;
 	private final DocOrientationPostprocessor docOriPost;
 	private final boolean docOriEnabled;
-	private final PPOcrV6Config config;
 	private final PdfTextExtractor pdfExtractor = new PdfTextExtractor();
 
 	private boolean closed = false;
@@ -175,7 +174,6 @@ public final class PPOcrV6Engine implements Closeable {
 			this.recBatchSize = config.getRecBatchSize();
 			this.docOriPre = new DocOrientationPreprocessor();
 			this.docOriPost = new DocOrientationPostprocessor(config.getDocOrientationThresh());
-			this.config = config;
 			if (docOriEnabled) {
 				this.docOriInputName = docOriSession.getInputNames().iterator().next();
 				this.docOriOutputName = docOriSession.getOutputNames().iterator().next();
