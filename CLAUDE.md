@@ -155,15 +155,11 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
   - 几何工具 `minX/maxX/minY/maxY`。
 
-- **`parser.vehicle.VehicleLicenseParser`** — 首个实现（行驶证）。同时提供：
-
-  - 静态 `parse(List)` 工具类风格入口；
-
-  - 实例方法 `parseResults` 实现 SPI；
-
-  - `INSTANCE` 单例，便于 Spring 注入。
-
-- **新解析器待办**：身份证（正反面） / 银行卡 / 驾照。
+- **10 个内置解析器**：`bankcard` / `business` / `driver` / `household` / `idcard` /
+  `invoice`（含 `Electronic` / `Vat` 与通用 `Invoice` / `UpperMoneyConverter`）/ `pdd` /
+  `taxi` / `train` / `vehicle`。每个继承 `BaseStructuredParser<R>`，实现 `parseResults(...)`。
+  Spring Boot / Solon 通过 `PPOcrTemplate.xxx()` getter 获取已绑定 engine 的实例。
+  调用方也可直接 `new XxxParser(engine).parse(bytes)` 一站式调用。
 
 ### mica-ppocr-spring-boot-starter
 

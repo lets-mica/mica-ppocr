@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.autoconfigure;
 
 import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode;
 import lombok.Data;
+import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -27,7 +28,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  */
 @Data
 @ConfigurationProperties(prefix = "mica.ai.ppocr")
-public class PPOCRProperties {
+public class PPOCRProperties implements PPOcrV6Config.Source {
 
 	/**
 	 * 是否启用该 Starter。默认 true：启用时必填的 det/rec 模型路径及字典缺失将启动失败；

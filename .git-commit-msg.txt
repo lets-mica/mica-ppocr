@@ -1,0 +1,16 @@
+refactor(core): 提取 PPOcrV6Config.Source 接口 + CollUtil 去冗余 + Engine PDF 提示 + CLAUDE 同步
+
+- PPOcrV6Config 新增 Source 接口与 from(Source) 静态工厂
+  - spring-boot / solon 两端 PPOCRProperties 实现该接口
+  - 两端 AutoConfiguration 18 行 builder 复制 → 1 行 from(properties).toBuilder()
+  - 净减两端共 36 行重复代码
+- PPOcrV6Config.@Builder 加 toBuilder=true 支持 customizer 链式复用
+- CollUtil.listOf(T...) 去掉冗余 new ArrayList<>(Arrays.asList(...)) 拷贝
+- PPOcrV6Engine.run(byte[]) 入口加 PDF 魔数嗅探与明确错误提示
+  - 引导调用方走 runPdf(byte[]) 而非让 OpenCV 报"Failed to decode image"
+- CLAUDE.md 同步现状：
+  - 模块树补全 10 个 parser、DocOrientation 等新增类、CollUtil/ModelResourceLoader
+  - 删除"新解析器待办"过期说明（身份证 / 银行卡 / 驾照均已实现）
+  - PPOCRProperties 说明补 PPOcrV6Config.Source 实现
+
+全模块测试 0 失败，core 72 tests、structured 13 tests、solon 12 tests、starter 14 tests。

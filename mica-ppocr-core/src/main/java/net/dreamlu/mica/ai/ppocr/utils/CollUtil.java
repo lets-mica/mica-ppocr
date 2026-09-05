@@ -143,6 +143,9 @@ public class CollUtil {
 	/**
 	 * 返回包含 N 个元素的不可变 List。
 	 *
+	 * <p>直接包装 {@link Arrays#asList}：避免一次冗余的 {@code new ArrayList<>(...)} 拷贝，
+	 * 与 {@code List.of(...)} 行为一致（不可变、定长、拒绝 null）。
+	 *
 	 * @param <T>      元素类型
 	 * @param elements 元素数组
 	 * @return 包含指定元素的不可变 List
@@ -152,7 +155,7 @@ public class CollUtil {
 		if (elements == null || elements.length == 0) {
 			return Collections.emptyList();
 		}
-		return Collections.unmodifiableList(new ArrayList<>(Arrays.asList(elements)));
+		return Collections.unmodifiableList(Arrays.asList(elements));
 	}
 
 	/**

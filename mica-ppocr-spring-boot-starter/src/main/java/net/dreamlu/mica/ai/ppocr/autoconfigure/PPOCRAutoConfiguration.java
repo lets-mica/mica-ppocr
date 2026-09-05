@@ -52,6 +52,9 @@ public class PPOCRAutoConfiguration {
 	/**
 	 * 组装 PPOcrV6Config。
 	 *
+	 * <p>字段拷贝逻辑下沉到 {@link PPOcrV6Config#from(PPOcrV6Config.Source)}，
+	 * 本方法只负责必填校验与 customizer 注入。
+	 *
 	 * @param properties  yml 配置属性
 	 * @param customizers PPOCRPropertiesCustomizer 集合
 	 * @return PPOcrV6Config 实例
@@ -62,27 +65,7 @@ public class PPOCRAutoConfiguration {
 		requireNonBlank(properties.getDetModelPath(), "mica.ai.ppocr.det-model-path");
 		requireNonBlank(properties.getRecModelPath(), "mica.ai.ppocr.rec-model-path");
 		requireNonBlank(properties.getRecCharDictPath(), "mica.ai.ppocr.rec-char-dict-path");
-		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.builder()
-			.detModelPath(properties.getDetModelPath())
-			.recModelPath(properties.getRecModelPath())
-			.recCharDictPath(properties.getRecCharDictPath())
-			.detLimitSideLen(properties.getDetLimitSideLen())
-			.detLimitType(properties.getDetLimitType())
-			.detMaxSideLimit(properties.getDetMaxSideLimit())
-			.detThresh(properties.getDetThresh())
-			.detBoxThresh(properties.getDetBoxThresh())
-			.detUnclipRatio(properties.getDetUnclipRatio())
-			.recImageShape(properties.getRecImageShape())
-			.recBatchSize(properties.getRecBatchSize())
-			.preferAccelerator(properties.isPreferAccelerator())
-			.useDocOrientationClassify(properties.isUseDocOrientationClassify())
-			.docOrientationModelPath(properties.getDocOrientationModelPath())
-			.docOrientationThresh(properties.getDocOrientationThresh())
-			.intraOpNumThreads(properties.getIntraOpNumThreads())
-			.interOpNumThreads(properties.getInterOpNumThreads())
-			.execMode(properties.getExecMode())
-			.enableCpuMemArena(properties.isEnableCpuMemArena())
-			.enableMemoryPattern(properties.isEnableMemoryPattern());
+		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.from(properties).toBuilder();
 		// 容器顺序应用 customizer（依赖 @Order / Ordered 即可控）
 		customizers.orderedStream().forEach(customizer -> customizer.customize(builder));
 		return builder.build();

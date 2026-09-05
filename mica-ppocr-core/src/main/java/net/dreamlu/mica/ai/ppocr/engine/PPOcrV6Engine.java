@@ -375,11 +375,21 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 * 典型场景：Spring Boot 上传 {@code MultipartFile.getBytes()}。
 	 *
+	 * <p>如果字节流以 {@code %PDF-} 魔数开头，会被识别为 PDF 并给出明确错误，
+	 * 引导调用方改用 {@link #runPdf(byte[])}。
+	 *
 	 * @param imgBytes 图片字节（PNG / JPG / BMP 等任意 OpenCV 支持的格式）
 	 * @return 识别结果列表（按阅读顺序排列）
-	 * @throws IllegalArgumentException 字节为空或解码失败
+	 * @throws IllegalArgumentException 字节为空、字节是 PDF、或解码失败
 	 */
 	public List<PPOcrV6Result> run(byte[] imgBytes) {
+		if (imgBytes == null || imgBytes.length == 0) {
+			throw new IllegalArgumentException("imgBytes must not be empty");
+		}
+		if (PdfMagicDetector.isPdf(imgBytes)) {
+			throw new IllegalArgumentException(
+				"input bytes are a PDF; use runPdf(byte[]) for PDF inputs");
+		}
 		Mat mat = decodeMat(imgBytes);
 		try {
 			return runMat(mat);

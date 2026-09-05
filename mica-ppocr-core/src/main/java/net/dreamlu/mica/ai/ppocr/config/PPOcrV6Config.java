@@ -26,7 +26,7 @@ import lombok.Getter;
  * <p>使用 Builder 模式构建，所有参数均有合理默认值。
  */
 @Getter
-@Builder
+@Builder(toBuilder = true)
 public final class PPOcrV6Config {
 
 	/**
@@ -203,5 +203,94 @@ public final class PPOcrV6Config {
 	 */
 	public static PPOcrV6Config defaults() {
 		return builder().build();
+	}
+
+	/**
+	 * 通用配置源：把任意具有同名 getter 的属性对象转换为 {@link PPOcrV6Config}。
+	 *
+	 * <p>用于消除 spring-boot / solon 两端自动配置中 18 行
+	 * {@code builder().detModelPath(...).recModelPath(...)...} 复制：
+	 * 两端只需让各自的 {@code PPOCRProperties} 实现本接口，
+	 * 即可调用 {@code PPOcrV6Config.from(properties)} 一行完成转换。
+	 *
+	 * <p>core 不直接依赖 spring-boot / solon，避免编译期绑定两端框架；
+	 * 接口契约以"用得到的 getter 名"为白名单，由两端实现自行暴露。
+	 *
+	 * @author L.cm
+	 */
+	public interface Source {
+		String getDetModelPath();
+
+		String getRecModelPath();
+
+		String getRecCharDictPath();
+
+		int getDetLimitSideLen();
+
+		String getDetLimitType();
+
+		int getDetMaxSideLimit();
+
+		float getDetThresh();
+
+		float getDetBoxThresh();
+
+		float getDetUnclipRatio();
+
+		int[] getRecImageShape();
+
+		int getRecBatchSize();
+
+		boolean isPreferAccelerator();
+
+		boolean isUseDocOrientationClassify();
+
+		String getDocOrientationModelPath();
+
+		float getDocOrientationThresh();
+
+		int getIntraOpNumThreads();
+
+		int getInterOpNumThreads();
+
+		ExecutionMode getExecMode();
+
+		boolean isEnableCpuMemArena();
+
+		boolean isEnableMemoryPattern();
+	}
+
+	/**
+	 * 把 {@link Source} 配置源转换为 {@link PPOcrV6Config}。
+	 *
+	 * <p>约定：null 字段（如未配置的 docOrientationModelPath）会保留为 null，
+	 * 由 {@link PPOcrV6Engine} 构造器按 {@code useDocOrientationClassify} 决定是否必填。
+	 *
+	 * @param source 配置源（spring-boot / solon 各自的 properties）
+	 * @return 构造好的 PPOcrV6Config
+	 */
+	public static PPOcrV6Config from(Source source) {
+		return builder()
+			.detModelPath(source.getDetModelPath())
+			.recModelPath(source.getRecModelPath())
+			.recCharDictPath(source.getRecCharDictPath())
+			.detLimitSideLen(source.getDetLimitSideLen())
+			.detLimitType(source.getDetLimitType())
+			.detMaxSideLimit(source.getDetMaxSideLimit())
+			.detThresh(source.getDetThresh())
+			.detBoxThresh(source.getDetBoxThresh())
+			.detUnclipRatio(source.getDetUnclipRatio())
+			.recImageShape(source.getRecImageShape())
+			.recBatchSize(source.getRecBatchSize())
+			.preferAccelerator(source.isPreferAccelerator())
+			.useDocOrientationClassify(source.isUseDocOrientationClassify())
+			.docOrientationModelPath(source.getDocOrientationModelPath())
+			.docOrientationThresh(source.getDocOrientationThresh())
+			.intraOpNumThreads(source.getIntraOpNumThreads())
+			.interOpNumThreads(source.getInterOpNumThreads())
+			.execMode(source.getExecMode())
+			.enableCpuMemArena(source.isEnableCpuMemArena())
+			.enableMemoryPattern(source.isEnableMemoryPattern())
+			.build();
 	}
 }
