@@ -112,6 +112,8 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 - **`engine/PPOcrV6Engine`** — the orchestrator and only public entry point. Owns the two
   `OrtSession`s (det + rec), is `Closeable` (use try-with-resources), and exposes `detect()`,
   `recognize()`, and the full `run(Mat)`. Accepts a `PPOcrV6Config` (Lombok `@Builder`).
+  `run(byte[])` / `run(Path)` 自动嗅探 `%PDF-` 魔数：命中时按 PDF 双通道处理并平铺所有页结果；
+  非 PDF 走图片通道。
 
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
 

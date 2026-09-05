@@ -28,6 +28,7 @@ import java.util.List;
 
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.electronicInvoiceStylePdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.imageOnlyPdf;
+import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.multiPageTextPdf;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -94,6 +95,31 @@ class PdfEngineRunPdfIntegrationTest {
 			assertEquals(1, pages.size());
 			assertTrue(pages.get(0).viaOcr(), "image-only pdf must go through ocr channel");
 			assertEquals(0, pages.get(0).pageIndex());
+		}
+	}
+
+	@Test
+	void runBytesAutoDispatchesPdfAndFlattensPages() throws Exception {
+		Path root = findRepositoryRoot();
+		Path modelDir = root.resolve("models/ppocr-v6/" + DEFAULT_TIER);
+		Assumptions.assumeTrue(Files.isRegularFile(modelDir.resolve("det.onnx"))
+				&& Files.isRegularFile(modelDir.resolve("rec.onnx"))
+				&& Files.isRegularFile(modelDir.resolve("dict.txt")),
+			"tiny 模型缺失，跳过集成测试");
+
+		nu.pattern.OpenCV.loadLocally();
+		try (PPOcrV6Engine engine = newEngine(modelDir)) {
+			// 多页文字型 PDF → run(byte[]) 应自动按 PDF 双通道处理并平铺所有页
+			byte[] pdfBytes = multiPageTextPdf(3);
+			List<net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result> flat =
+				engine.run(pdfBytes);
+
+			assertFalse(flat.isEmpty(), "PDF 多页 run(byte[]) 应平铺至少一页结果");
+			// 文本型 PDF 走文本层（viaOcr=false），应能拿到完整文本行
+			long nonOcrPages = engine.runPdf(pdfBytes).stream()
+				.filter(p -> !p.viaOcr())
+				.count();
+			assertTrue(nonOcrPages >= 1, "至少有 1 页走文本层");
 		}
 	}
 

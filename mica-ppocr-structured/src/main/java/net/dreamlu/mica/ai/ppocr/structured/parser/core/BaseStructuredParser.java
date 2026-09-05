@@ -127,7 +127,9 @@ public abstract class BaseStructuredParser<R> {
 	 * <p>兼容非默认文件系统（如 ZIP / JIMFS / 内存 FS）：优先走 native 文件读取，
 	 * 不支持的 FileSystem 自动退回 {@code Files.readAllBytes}。
 	 *
-	 * @param imagePath 图片路径
+	 * <p>若文件为 PDF（{@code %PDF-} 魔数），自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * @param imagePath 图片或 PDF 路径
 	 * @return 结构化结果
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
@@ -140,10 +142,13 @@ public abstract class BaseStructuredParser<R> {
 	 *
 	 * <p>典型场景：Spring Boot 上传 {@code MultipartFile.getBytes()}。
 	 *
-	 * @param imgBytes 图片字节（PNG / JPG / BMP 等任意 OpenCV 支持的格式）
+	 * <p>若字节流为 PDF（{@code %PDF-} 魔数），自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * @param imgBytes 图片或 PDF 字节
 	 * @return 结构化结果
+	 * @throws IOException PDF 解析失败
 	 */
-	public final R parse(byte[] imgBytes) {
+	public final R parse(byte[] imgBytes) throws IOException {
 		return parseResults(engine.run(imgBytes));
 	}
 
@@ -153,7 +158,7 @@ public abstract class BaseStructuredParser<R> {
 	 * <p>内部读取全部流为 byte[] 后调用 {@code engine.run(byte[])}。
 	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
 	 *
-	 * @param in 图片输入流
+	 * @param in 图片或 PDF 输入流
 	 * @return 结构化结果
 	 * @throws IOException 读取流失败
 	 */

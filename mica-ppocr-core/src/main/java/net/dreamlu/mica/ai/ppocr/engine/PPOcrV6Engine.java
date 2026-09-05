@@ -57,12 +57,14 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.FloatBuffer;
 import java.nio.file.Files;
+import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 /**
  * PP-OCRv6 纯 ONNX Runtime 推理引擎。
@@ -318,7 +320,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
-	 * @param imagePath 图片路径（PNG / JPG / BMP 等任意 OpenCV 支持的格式）
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
+	 *
+	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 路径为空、文件不存在或解码失败
 	 */
@@ -334,7 +338,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
-	 * @param imageFile 图片文件
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
+	 *
+	 * @param imageFile 图片或 PDF 文件
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 文件不存在或解码失败
 	 */
@@ -351,13 +357,28 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>兼容非默认文件系统的 {@link Path}（如 ZIP/JIMFS 等）：优先走 native 文件读取，
 	 * 不支持的 FileSystem 自动退回 {@code Files.readAllBytes}。
 	 *
-	 * @param imagePath 图片路径
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
+	 *
+	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public List<PPOcrV6Result> run(Path imagePath) {
 		if (imagePath == null) {
 			throw new IllegalArgumentException("imagePath must not be null");
+		}
+		// 默认 FileSystem：先读头部字节嗅探 PDF，避免 OpenCV 解析 PDF 失败
+		if (imagePath.getFileSystem().equals(FileSystems.getDefault())) {
+			try {
+				byte[] head = readHeadBytes(imagePath, 1024 + 8);
+				if (PdfMagicDetector.isPdf(head)) {
+					return runPdf(imagePath).stream()
+						.flatMap(page -> page.results().stream())
+						.collect(Collectors.toList());
+				}
+			} catch (IOException ignore) {
+				// 嗅探失败时按图片走（保持向后兼容）
+			}
 		}
 		Mat mat = loadMat(imagePath);
 		try {
@@ -373,26 +394,76 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 * 典型场景：Spring Boot 上传 {@code MultipartFile.getBytes()}。
 	 *
-	 * <p>如果字节流以 {@code %PDF-} 魔数开头，会被识别为 PDF 并给出明确错误，
-	 * 引导调用方改用 {@link #runPdf(byte[])}。
+	 * <p>自动嗅探输入：字节流以 {@code %PDF-} 魔数开头时，自动转发到 {@link #runPdf(byte[])}
+	 * 并平铺所有页的文本框列表。其它格式按图片走。
 	 *
-	 * @param imgBytes 图片字节（PNG / JPG / BMP 等任意 OpenCV 支持的格式）
-	 * @return 识别结果列表（按阅读顺序排列）
-	 * @throws IllegalArgumentException 字节为空、字节是 PDF、或解码失败
+	 * @param imgBytes 图片或 PDF 字节（PNG / JPG / BMP / PDF）
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 * @throws IllegalArgumentException 字节为空或解码失败
+	 * @throws IOException              PDF 解析失败
 	 */
-	public List<PPOcrV6Result> run(byte[] imgBytes) {
+	public List<PPOcrV6Result> run(byte[] imgBytes) throws IOException {
 		if (imgBytes == null || imgBytes.length == 0) {
 			throw new IllegalArgumentException("imgBytes must not be empty");
 		}
 		if (PdfMagicDetector.isPdf(imgBytes)) {
-			throw new IllegalArgumentException(
-				"input bytes are a PDF; use runPdf(byte[]) for PDF inputs");
+			return runPdf(imgBytes).stream()
+				.flatMap(page -> page.results().stream())
+				.collect(Collectors.toList());
 		}
 		Mat mat = decodeMat(imgBytes);
 		try {
 			return runMat(mat);
 		} finally {
 			mat.release();
+		}
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部读取全部流为 byte[] 后转发到 {@link #run(byte[])}。
+	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
+	 *
+	 * <p>自动嗅探输入：若为 PDF，按 PDF 双通道处理。
+	 *
+	 * @param in 图片或 PDF 输入流
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 * @throws IllegalArgumentException 输入流为 null
+	 * @throws IOException              读取流失败
+	 */
+	public List<PPOcrV6Result> run(InputStream in) throws IOException {
+		if (in == null) {
+			throw new IllegalArgumentException("InputStream must not be null");
+		}
+		return run(CollUtil.readAllBytes(in));
+	}
+
+	/**
+	 * 从 {@link Path} 读取头部 N 个字节用于 PDF 魔数嗅探。
+	 *
+	 * @param path  文件路径
+	 * @param limit 最大读取字节数
+	 * @return 头部字节（可能短于 limit）
+	 * @throws IOException 读取失败
+	 */
+	private static byte[] readHeadBytes(Path path, int limit) throws IOException {
+		try (InputStream in = Files.newInputStream(path)) {
+			byte[] buf = new byte[limit];
+			int total = 0;
+			while (total < limit) {
+				int n = in.read(buf, total, limit - total);
+				if (n < 0) {
+					break;
+				}
+				total += n;
+			}
+			if (total == buf.length) {
+				return buf;
+			}
+			byte[] out = new byte[total];
+			System.arraycopy(buf, 0, out, 0, total);
+			return out;
 		}
 	}
 

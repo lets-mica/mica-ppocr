@@ -149,10 +149,11 @@ public final class PPOcrTemplate {
 	/**
 	 * 纯 OCR 识别：检测 → 排序 → 裁剪 → 识别。
 	 *
-	 * @param imgBytes 图片字节
-	 * @return 识别结果列表（按阅读顺序排列）
+	 * @param imgBytes 图片或 PDF 字节
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 * @throws java.io.IOException PDF 解析失败
 	 */
-	public List<PPOcrV6Result> run(byte[] imgBytes) {
+	public List<PPOcrV6Result> run(byte[] imgBytes) throws java.io.IOException {
 		return engine.run(imgBytes);
 	}
 
