@@ -19,9 +19,15 @@
             <groupId>net.dreamlu</groupId>
             <artifactId>mica-ppocr-core</artifactId>
         </dependency>
+        <!--
+            pdfbox 是 PDF 解析必需依赖，标记 optional=true 防止传递污染下游：
+            业务方需要 PDF 通道时显式引入 mica-ppocr-pdf；只用图片 OCR 的项目
+            不会背上一个 ~7MB 的 pdfbox 及其 native/fontbox 传递依赖。
+        -->
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

@@ -16,6 +16,7 @@
 
 package net.dreamlu.mica.ai.ppocr.pdf;
 
+import net.dreamlu.mica.ai.ppocr.utils.PdfMagicDetector;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -41,19 +42,19 @@ class PdfOcrSupportTest {
 
 	@Test
 	void isPdfMagicSniffing() {
-		assertTrue(PdfOcrSupport.isPdf("%PDF-1.7\n%âãÏÓ\n".getBytes(StandardCharsets.ISO_8859_1)));
-		assertTrue(PdfOcrSupport.isPdf("%PDF-1.4".getBytes(StandardCharsets.ISO_8859_1)));
+		assertTrue(PdfMagicDetector.isPdf("%PDF-1.7\n%âãÏÓ\n".getBytes(StandardCharsets.ISO_8859_1)));
+		assertTrue(PdfMagicDetector.isPdf("%PDF-1.4".getBytes(StandardCharsets.ISO_8859_1)));
 		// header 前垃圾数据（1024 字节窗口内）
 		byte[] withJunk = new byte[100 + "%PDF-1.7".length()];
 		new java.util.Random(42).nextBytes(withJunk);
 		byte[] magic = "%PDF-1.7".getBytes(StandardCharsets.ISO_8859_1);
 		System.arraycopy(magic, 0, withJunk, 100, magic.length);
-		assertTrue(PdfOcrSupport.isPdf(withJunk));
+		assertTrue(PdfMagicDetector.isPdf(withJunk));
 		// 非 PDF
-		assertFalse(PdfOcrSupport.isPdf(null));
-		assertFalse(PdfOcrSupport.isPdf(new byte[0]));
-		assertFalse(PdfOcrSupport.isPdf(new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A})); // PNG
-		assertFalse(PdfOcrSupport.isPdf("PDF-1.7".getBytes(StandardCharsets.ISO_8859_1))); // 缺 %
+		assertFalse(PdfMagicDetector.isPdf(null));
+		assertFalse(PdfMagicDetector.isPdf(new byte[0]));
+		assertFalse(PdfMagicDetector.isPdf(new byte[]{(byte) 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A})); // PNG
+		assertFalse(PdfMagicDetector.isPdf("PDF-1.7".getBytes(StandardCharsets.ISO_8859_1))); // 缺 %
 	}
 
 	@Test
