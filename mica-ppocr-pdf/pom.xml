@@ -40,6 +40,11 @@
             <artifactId>mica-ppocr-structured</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>net.dreamlu</groupId>
+            <artifactId>mica-auto</artifactId>
+            <scope>provided</scope>
+        </dependency>
     </dependencies>
 
 </project>

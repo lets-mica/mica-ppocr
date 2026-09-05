@@ -23,6 +23,7 @@ import net.dreamlu.mica.ai.ppocr.loader.LoaderContext;
 import net.dreamlu.mica.ai.ppocr.loader.OcrInput;
 import net.dreamlu.mica.ai.ppocr.loader.OcrResources;
 import net.dreamlu.mica.ai.ppocr.loader.Page;
+import net.dreamlu.mica.auto.annotation.AutoService;
 import nu.pattern.OpenCV;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
@@ -67,6 +68,7 @@ import java.util.Map;
  * <p>优先级 0（默认），与 {@link net.dreamlu.mica.ai.ppocr.loader.ImageInputLoader}
  * 的 -100 形成顺序：PDF 在前，图片兜底在后。
  */
+@AutoService(InputLoader.class)
 public class PdfInputLoader implements InputLoader {
 
 	private final PdfOcrConfig config;
