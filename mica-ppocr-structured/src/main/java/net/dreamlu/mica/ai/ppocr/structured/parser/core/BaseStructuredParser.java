@@ -160,14 +160,21 @@ public abstract class BaseStructuredParser<R> {
 	 * <p>内部读取全部流为 byte[] 后调用 {@code engine.run(byte[])}。
 	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
 	 *
+	 * <p>流读取失败时包为 {@link UncheckedIOException} 抛出，调用方免 try-catch。
+	 *
 	 * @param in 图片或 PDF 输入流
 	 * @return 结构化结果
-	 * @throws IOException 读取流失败
 	 */
-	public final R parse(InputStream in) throws IOException {
+	public final R parse(InputStream in) {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
-		return parseResults(engine.run(CollUtil.readAllBytes(in)));
+		byte[] bytes;
+		try {
+			bytes = CollUtil.readAllBytes(in);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+		return parseResults(engine.run(bytes));
 	}
 }

@@ -165,15 +165,20 @@ public final class PPOcrTemplate {
 	 * <p>内部读取全部流为 byte[] 后调用 {@code engine.run(byte[])}。
 	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
 	 *
-	 * @param in 图片输入流
-	 * @return 识别结果列表（按阅读顺序排列）
-	 * @throws java.io.IOException 读取流失败
+	 * <p>流读取失败时包为 {@link java.io.UncheckedIOException} 抛出。
+	 *
+	 * @param in 图片或 PDF 输入流
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
 	 */
-	public List<PPOcrV6Result> run(InputStream in) throws java.io.IOException {
+	public List<PPOcrV6Result> run(InputStream in) {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
-		return engine.run(CollUtil.readAllBytes(in));
+		try {
+			return engine.run(CollUtil.readAllBytes(in));
+		} catch (java.io.IOException e) {
+			throw new java.io.UncheckedIOException(e);
+		}
 	}
 
 	// ==================================================================

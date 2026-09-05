@@ -432,16 +432,21 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>自动嗅探输入：若为 PDF，按 PDF 双通道处理。
 	 *
+	 * <p>流读取失败时包为 {@link UncheckedIOException} 抛出，调用方免 try-catch。
+	 *
 	 * @param in 图片或 PDF 输入流
 	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
 	 * @throws IllegalArgumentException 输入流为 null
-	 * @throws IOException              读取流失败
 	 */
-	public List<PPOcrV6Result> run(InputStream in) throws IOException {
+	public List<PPOcrV6Result> run(InputStream in) {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
-		return run(CollUtil.readAllBytes(in));
+		try {
+			return run(CollUtil.readAllBytes(in));
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
 	}
 
 	/**

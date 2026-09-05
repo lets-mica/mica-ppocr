@@ -113,8 +113,9 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `OrtSession`s (det + rec), is `Closeable` (use try-with-resources), and exposes `detect()`,
   `recognize()`, and the full `run(Mat)`. Accepts a `PPOcrV6Config` (Lombok `@Builder`).
   `run(byte[])` / `run(Path)` 自动嗅探 `%PDF-` 魔数：命中时按 PDF 双通道处理并平铺所有页结果；
-  非 PDF 走图片通道。`run(byte[])` / `parse(byte[])` 不声明 `throws IOException`——
-  PDF 解析失败时引擎内部包为 `UncheckedIOException` 抛出，调用方免 try-catch。
+  非 PDF 走图片通道。`run(byte[])` / `run(InputStream)` / `parse(byte[])` / `parse(InputStream)`
+  均不声明 `throws IOException`——PDF 解析或流读取失败时引擎内部包为 `UncheckedIOException`
+  抛出，调用方免 try-catch。
 
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
 
