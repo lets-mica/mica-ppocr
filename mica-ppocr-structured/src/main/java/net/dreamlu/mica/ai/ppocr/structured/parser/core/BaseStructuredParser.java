@@ -144,11 +144,13 @@ public abstract class BaseStructuredParser<R> {
 	 *
 	 * <p>若字节流为 PDF（{@code %PDF-} 魔数），自动按 PDF 双通道处理并平铺所有页结果。
 	 *
+	 * <p>PDF 解析失败时由 engine 内部包为 {@link UncheckedIOException} 抛出，
+	 * 调用方无需强制 try-catch。
+	 *
 	 * @param imgBytes 图片或 PDF 字节
 	 * @return 结构化结果
-	 * @throws IOException PDF 解析失败
 	 */
-	public final R parse(byte[] imgBytes) throws IOException {
+	public final R parse(byte[] imgBytes) {
 		return parseResults(engine.run(imgBytes));
 	}
 

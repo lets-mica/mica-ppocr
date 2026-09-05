@@ -397,19 +397,24 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>自动嗅探输入：字节流以 {@code %PDF-} 魔数开头时，自动转发到 {@link #runPdf(byte[])}
 	 * 并平铺所有页的文本框列表。其它格式按图片走。
 	 *
+	 * <p>PDF 解析失败时抛 {@link UncheckedIOException}（unchecked），避免强制 try-catch。
+	 *
 	 * @param imgBytes 图片或 PDF 字节（PNG / JPG / BMP / PDF）
 	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
 	 * @throws IllegalArgumentException 字节为空或解码失败
-	 * @throws IOException              PDF 解析失败
 	 */
-	public List<PPOcrV6Result> run(byte[] imgBytes) throws IOException {
+	public List<PPOcrV6Result> run(byte[] imgBytes) {
 		if (imgBytes == null || imgBytes.length == 0) {
 			throw new IllegalArgumentException("imgBytes must not be empty");
 		}
 		if (PdfMagicDetector.isPdf(imgBytes)) {
-			return runPdf(imgBytes).stream()
-				.flatMap(page -> page.results().stream())
-				.collect(Collectors.toList());
+			try {
+				return runPdf(imgBytes).stream()
+					.flatMap(page -> page.results().stream())
+					.collect(Collectors.toList());
+			} catch (IOException e) {
+				throw new UncheckedIOException(e);
+			}
 		}
 		Mat mat = decodeMat(imgBytes);
 		try {
