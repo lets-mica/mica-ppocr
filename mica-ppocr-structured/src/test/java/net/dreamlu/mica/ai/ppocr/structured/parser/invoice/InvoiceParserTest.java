@@ -491,6 +491,96 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("钟寒冰", r.getIssuer());
 	}
 
+	/**
+	 * 数电票购销方版式：左侧合并框（"名称：xxx"），右侧 label 与 value 独立。
+	 *
+	 * <p>修复前 {@code parseParties} 只把"以 名称：开头"的框加进 nameBoxes，
+	 * 右侧独立 label "名称" + 独立 value "陕西滴滴出行科技有限公司" 只有一个框
+	 * 入选 → size == 1 → 走 else-if 分支只设 buyerName，sellerName 永远 null。
+	 * 修复后增加 label 独立路径：纯 label 框"名称"右侧 y 重叠区域找 value，
+	 * 再按 minX 分两列。
+	 */
+	@Test
+	void parse_electronic_invoice_splitLabelOnRight() {
+		List<PPOcrV6Result> results = buildElectronicInvoiceSplitLabelOcr();
+		InvoiceResult r = PARSER.parseResults(results);
+		assertNotNull(r);
+		assertEquals(InvoiceVersion.ELECTRONIC, r.getVersion());
+		assertEquals("26347000000000999999", r.getInvoiceNo());
+		assertEquals("2026年02月04日", r.getInvoiceDate());
+		// 购方：合并框 → 剥前缀
+		assertEquals("北京某某有限公司", r.getBuyerName());
+		assertEquals("91110000000000000X", r.getBuyerTaxNo());
+		// 销方：label 独立 + value 独立（修复前为 null）
+		assertEquals("陕西滴滴出行科技有限公司", r.getSellerName());
+		assertEquals("91610138MA6X3B1A27", r.getSellerTaxNo());
+	}
+
+	private static List<PPOcrV6Result> buildElectronicInvoiceSplitLabelOcr() {
+		String[] lines = {
+			"text=\"电子发票（普通发票）\"  score=0.99  box=[(295,30),(513,73)]",
+			"text=\"发票号码：26347000000000999999\"  score=0.99  box=[(660,44),(871,59)]",
+			"text=\"开票日期：2026年02月04日\"  score=0.99  box=[(658,69),(831,87)]",
+			// 购方：合并框
+			"text=\"名称：北京某某有限公司\"  score=0.99  box=[(48,136),(242,150)]",
+			"text=\"统一社会信用代码/纳税人识别号：91110000000000000X\"  score=0.99  box=[(47,193),(411,208)]",
+			// 销方：label 独立 + value 独立（核心场景）
+			"text=\"名称\"  score=0.99  box=[(478,136),(503,150)]",
+			"text=\"陕西滴滴出行科技有限公司\"  score=0.99  box=[(510,136),(673,150)]",
+			"text=\"统一社会信用代码/纳税人识别号\"  score=0.99  box=[(475,192),(672,208)]",
+			"text=\"91610138MA6X3B1A27\"  score=0.99  box=[(680,192),(845,208)]",
+			// 明细表
+			"text=\"项目名称\"  score=0.99  box=[(113,223),(172,238)]",
+			"text=\"单价\"  score=0.99  box=[(376,220),(409,241)]",
+			"text=\"数量\"  score=0.99  box=[(504,220),(538,242)]",
+			"text=\"金额\"  score=0.99  box=[(615,222),(649,240)]",
+			"text=\"税率/征收率\"  score=0.99  box=[(662,223),(741,239)]",
+			"text=\"税额\"  score=0.99  box=[(845,220),(879,241)]",
+			"text=\"*运输服务*客运服务费\"  score=0.99  box=[(20,240),(181,255)]",
+			"text=\"155.63\"  score=0.99  box=[(342,239),(410,257)]",
+			"text=\"1\"  score=0.99  box=[(525,241),(537,255)]",
+			"text=\"155.63\"  score=0.99  box=[(608,238),(650,258)]",
+			"text=\"3%\"  score=0.99  box=[(694,240),(712,257)]",
+			"text=\"4.67\"  score=0.99  box=[(844,237),(880,259)]",
+			"text=\"*运输服务*客运服务费\"  score=0.99  box=[(20,258),(182,275)]",
+			"text=\"-49.42\"  score=0.99  box=[(607,257),(650,277)]",
+			"text=\"3%\"  score=0.99  box=[(692,257),(714,277)]",
+			"text=\"-1.48\"  score=0.99  box=[(839,258),(881,276)]",
+			"text=\"价税合计（大写）\"  score=0.99  box=[(80,416),(181,432)]",
+			"text=\"壹佰零玖圆肆角整\"  score=0.99  box=[(253,412),(407,433)]",
+			"text=\"（小写）¥109.40\"  score=0.99  box=[(621,414),(722,433)]",
+			"text=\"开票人：赵笑林\"  score=0.99  box=[(470,520),(588,541)]",
+		};
+		return parseTextLines(lines);
+	}
+
+	/**
+	 * 与 buildElectronicInvoiceOcr 类似但 box 坐标是 4 个点 (x,y) 而非 2 个点。
+	 * 单元测试内复用：把 "text=...  box=[(x1,y1),(x2,y2),...]" 转成 PPOcrV6Result。
+	 */
+	private static List<PPOcrV6Result> parseTextLines(String[] lines) {
+		List<PPOcrV6Result> list = new ArrayList<>();
+		Pattern p = Pattern.compile(
+			"text=\"((?:[^\"\\\\]|\\\\.)*)\"\\s+score=[\\d.]+\\s+box=\\[([^\\]]+)\\]");
+		for (String line : lines) {
+			Matcher m = p.matcher(line);
+			if (!m.find()) continue;
+			String text = m.group(1)
+				.replace("\\\"", "\"").replace("\\\\", "\\")
+				.replace("\\n", "\n").replace("\\r", "\r").replace("\\t", "\t");
+			String[] pts = m.group(2).split("\\),\\(");
+			int[][] box = new int[pts.length][2];
+			for (int i = 0; i < pts.length; i++) {
+				String clean = pts[i].replace("(", "").replace(")", "").trim();
+				String[] xy = clean.split(",");
+				box[i][0] = Integer.parseInt(xy[0].trim());
+				box[i][1] = Integer.parseInt(xy[1].trim());
+			}
+			list.add(new PPOcrV6Result(text, 1.0f, box));
+		}
+		return list;
+	}
+
 	private static List<PPOcrV6Result> buildElectronicInvoiceOcr() {
 		String[] lines = {
 			"text=\"电子发晨(音通\"  score=0.698850  box=[(295,30),(513,73)]",

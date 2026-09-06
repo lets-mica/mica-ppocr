@@ -203,55 +203,186 @@ public class ElectronicInvoiceParser {
 	// ========================================================================
 
 	private void parseParties(InvoiceResult r, List<PPOcrV6Result> results) {
-		// 名称：左列 = 购方，右列 = 销方
-		List<PPOcrV6Result> nameBoxes = new ArrayList<>();
+		parsePartyField(r, results, NAME_PREFIX, "名称",
+			"buyerName", "sellerName",
+			ElectronicInvoiceParser::isValidNameValue);
+		parsePartyField(r, results, TAX_NO_PREFIX, "统一社会信用代码/纳税人识别号",
+			"buyerTaxNo", "sellerTaxNo",
+			ElectronicInvoiceParser::isValidTaxNoValue);
+	}
+
+	/**
+	 * 购销双方单字段（名称 / 税号）解析。
+	 *
+	 * <p>支持三种版式组合：
+	 * <ol>
+	 *   <li>两侧均为合并框（"名称：xxx"）—— 剥前缀即得 value；</li>
+	 *   <li>两侧均为纯 label 框（"名称"）—— 在右侧 y 重叠区域找 value；</li>
+	 *   <li>混合（一边合并、一边 label 独立）—— 分别走对应分支，再按 minX 分列。</li>
+	 * </ol>
+	 *
+	 * <p>value 框识别由 {@code valueFilter} 兜底：名称接受中英文/数字/标点，
+	 * 税号必须 15/18/20 位字母数字组合。互斥分配：同一值框最多被一侧占用。
+	 *
+	 * @param r             结果对象
+	 * @param results       OCR 结果
+	 * @param prefix        合并框前缀（"名称：" / "统一社会信用代码/纳税人识别号："）
+	 * @param labelText     纯 label 框文本（"名称" / "统一社会信用代码/纳税人识别号"）
+	 * @param buyerField    购方 setter 名（用于 applyFieldBox）
+	 * @param sellerField   销方 setter 名
+	 * @param valueFilter   value 框文本合法性判断
+	 */
+	private void parsePartyField(InvoiceResult r,
+								  List<PPOcrV6Result> results,
+								  String prefix,
+								  String labelText,
+								  String buyerField,
+								  String sellerField,
+								  java.util.function.Predicate<String> valueFilter) {
+		// 1) 收集候选条目：(box, valueText, source)
+		//    source 标记来自合并框 (MERGED) 还是 label-独立 (LABEL) 路径。
+		List<PartyEntry> entries = new ArrayList<>();
 		for (PPOcrV6Result box : results) {
 			String text = box.text();
-			if (text.equals("名称") || text.startsWith(NAME_PREFIX)) {
-				nameBoxes.add(box);
+			if (text == null || text.isEmpty()) continue;
+			if (text.startsWith(prefix)) {
+				String value = stripPrefix(text, prefix);
+				if (value != null) {
+					entries.add(new PartyEntry(box, value, PartySource.MERGED));
+				}
+			} else if (text.equals(labelText)) {
+				PPOcrV6Result valueBox = findPartyValueOnRight(results, box, valueFilter);
+				if (valueBox != null) {
+					entries.add(new PartyEntry(valueBox, valueBox.text().trim(), PartySource.LABEL));
+				}
 			}
 		}
-		if (nameBoxes.size() >= 2) {
-			nameBoxes.sort(Comparator.comparingInt(LabelMatcher::minX));
-			PPOcrV6Result buyerBox = nameBoxes.get(0);
-			PPOcrV6Result sellerBox = nameBoxes.get(nameBoxes.size() - 1);
-			String buyerName = stripPrefix(buyerBox.text(), NAME_PREFIX);
-			String sellerName = stripPrefix(sellerBox.text(), NAME_PREFIX);
-			r.setBuyerName(buyerName);
-			LabelMatcher.applyFieldBox(r, "buyerName", LabeledMatch.of(buyerName, buyerBox));
-			r.setSellerName(sellerName);
-			LabelMatcher.applyFieldBox(r, "sellerName", LabeledMatch.of(sellerName, sellerBox));
-		} else if (nameBoxes.size() == 1) {
-			PPOcrV6Result onlyBox = nameBoxes.get(0);
-			String name = stripPrefix(onlyBox.text(), NAME_PREFIX);
-			r.setBuyerName(name);
-			LabelMatcher.applyFieldBox(r, "buyerName", LabeledMatch.of(name, onlyBox));
+		if (entries.isEmpty()) {
+			return;
 		}
 
-		// 统一社会信用代码：左列 = 购方，右列 = 销方
-		List<PPOcrV6Result> taxBoxes = new ArrayList<>();
+		// 2) 按 minX 分两列：左 = 购方，右 = 销方。
+		//    同一框可能同时被合并框分支和 label 分支收集（合并框"名称：xxx"
+		//    的 label 分支因 text.equals("名称") 不会命中；故实际无重复）
+		//    仍以 minX 排序后取首/尾为安全。
+		entries.sort(Comparator.comparingInt(e -> LabelMatcher.minX(e.valueBox)));
+		PartyEntry first = entries.get(0);
+		PartyEntry last = entries.get(entries.size() - 1);
+		// 极端情况：两列被同一框（合并框"名称：" label 截胡到右侧 value）挤占——
+		// 仅在 size=1 时认为只有购方。
+		if (first == last) {
+			applyPartyField(r, buyerField, first);
+			return;
+		}
+		applyPartyField(r, buyerField, first);
+		applyPartyField(r, sellerField, last);
+	}
+
+	private static void applyPartyField(InvoiceResult r, String fieldName, PartyEntry entry) {
+		if ("buyerName".equals(fieldName)) r.setBuyerName(entry.value);
+		else if ("sellerName".equals(fieldName)) r.setSellerName(entry.value);
+		else if ("buyerTaxNo".equals(fieldName)) r.setBuyerTaxNo(entry.value);
+		else if ("sellerTaxNo".equals(fieldName)) r.setSellerTaxNo(entry.value);
+		LabelMatcher.applyFieldBox(r, fieldName, LabeledMatch.of(entry.value, entry.valueBox));
+	}
+
+	/**
+	 * 在 label 框右侧 y 重叠区域找首个合法的 value 框。
+	 *
+	 * <p>规则：
+	 * <ul>
+	 *   <li>value 框中心 x &gt; label 框中心 x（必须落在 label 右侧）；</li>
+	 *   <li>value 框 y 范围与 label 框 y 范围重叠（容差 ±5px）；</li>
+	 *   <li>text 通过 {@code valueFilter} 校验；</li>
+	 *   <li>取 x 起点最小者（紧邻 label 右侧的最左候选）。</li>
+	 * </ul>
+	 */
+	private static PPOcrV6Result findPartyValueOnRight(List<PPOcrV6Result> results,
+													   PPOcrV6Result labelBox,
+													   java.util.function.Predicate<String> valueFilter) {
+		int labelCenterX = (LabelMatcher.minX(labelBox) + LabelMatcher.maxX(labelBox)) / 2;
+		int labelMinY = LabelMatcher.minY(labelBox);
+		int labelMaxY = LabelMatcher.maxY(labelBox);
+		PPOcrV6Result best = null;
+		int bestX = Integer.MAX_VALUE;
 		for (PPOcrV6Result box : results) {
+			if (box == labelBox) continue;
 			String text = box.text();
-			if (text.startsWith(TAX_NO_PREFIX)) {
-				taxBoxes.add(box);
+			if (text == null || text.isEmpty()) continue;
+			if (!valueFilter.test(text)) continue;
+			int x0 = LabelMatcher.minX(box);
+			int centerX = (x0 + LabelMatcher.maxX(box)) / 2;
+			if (centerX <= labelCenterX) continue;
+			int minYr = LabelMatcher.minY(box);
+			int maxYr = LabelMatcher.maxY(box);
+			if (maxYr < labelMinY - 5 || minYr > labelMaxY + 5) continue;
+			if (x0 < bestX) {
+				bestX = x0;
+				best = box;
 			}
 		}
-		if (taxBoxes.size() >= 2) {
-			taxBoxes.sort(Comparator.comparingInt(LabelMatcher::minX));
-			PPOcrV6Result buyerTaxBox = taxBoxes.get(0);
-			PPOcrV6Result sellerTaxBox = taxBoxes.get(taxBoxes.size() - 1);
-			String buyerTaxNo = stripPrefix(buyerTaxBox.text(), TAX_NO_PREFIX);
-			String sellerTaxNo = stripPrefix(sellerTaxBox.text(), TAX_NO_PREFIX);
-			r.setBuyerTaxNo(buyerTaxNo);
-			LabelMatcher.applyFieldBox(r, "buyerTaxNo", LabeledMatch.of(buyerTaxNo, buyerTaxBox));
-			r.setSellerTaxNo(sellerTaxNo);
-			LabelMatcher.applyFieldBox(r, "sellerTaxNo", LabeledMatch.of(sellerTaxNo, sellerTaxBox));
-		} else if (taxBoxes.size() == 1) {
-			PPOcrV6Result onlyBox = taxBoxes.get(0);
-			String taxNo = stripPrefix(onlyBox.text(), TAX_NO_PREFIX);
-			r.setBuyerTaxNo(taxNo);
-			LabelMatcher.applyFieldBox(r, "buyerTaxNo", LabeledMatch.of(taxNo, onlyBox));
+		return best;
+	}
+
+	/**
+	 * 名称 value 合法性：长度 ≥ 2、非纯空白、排除明显是另一个 label 的情况。
+	 */
+	private static boolean isValidNameValue(String text) {
+		if (text == null) return false;
+		String t = text.trim();
+		if (t.length() < 2) return false;
+		// 排除其它独立 label fragment 误占（"销售"、"购买"、"统一社会..."）
+		for (String label : PARTY_VALUE_EXCLUDE_LABELS) {
+			if (t.equals(label) || t.startsWith(label)) return false;
 		}
+		return true;
+	}
+
+	/**
+	 * 税号 value 合法性：18 位（含字母）或 15 位（旧版）或 20 位（含字母数字）。
+	 * 允许尾部少量噪声。
+	 */
+	private static boolean isValidTaxNoValue(String text) {
+		if (text == null) return false;
+		String t = text.trim();
+		// 取连续字母数字段
+		StringBuilder sb = new StringBuilder();
+		for (int i = 0; i < t.length(); i++) {
+			char c = t.charAt(i);
+			if (Character.isLetterOrDigit(c)) sb.append(c);
+		}
+		int len = sb.length();
+		return len == 15 || len == 18 || len == 20;
+	}
+
+	/**
+	 * 不应作为名称 value 框的标签 fragment 集合（互斥保护）。
+	 */
+	private static final String[] PARTY_VALUE_EXCLUDE_LABELS = {
+		"销售", "购买", "购货", "销货", "销售方", "购买方", "购方", "销方",
+		"统一社会信用代码", "纳税人识别号", "统一社会信用代码/纳税人识别号"
+	};
+
+	/**
+	 * 购销双方单字段解析内部条目。
+	 */
+	private static final class PartyEntry {
+		final PPOcrV6Result valueBox;
+		final String value;
+		final PartySource source;
+
+		PartyEntry(PPOcrV6Result valueBox, String value, PartySource source) {
+			this.valueBox = valueBox;
+			this.value = value;
+			this.source = source;
+		}
+	}
+
+	private enum PartySource {
+		/** value 来自合并框"名称：xxx"剥前缀 */
+		MERGED,
+		/** value 来自 label 独立框"名称"右侧的独立框 */
+		LABEL
 	}
 
 	/**
