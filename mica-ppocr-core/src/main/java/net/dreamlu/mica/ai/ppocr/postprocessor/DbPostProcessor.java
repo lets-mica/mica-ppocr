@@ -239,6 +239,6 @@ public final class DbPostProcessor {
 		/**
 		 * 每框分数，长度 N
 		 */
-		private final float[] scores;
+		float[] scores;
 	}
 }

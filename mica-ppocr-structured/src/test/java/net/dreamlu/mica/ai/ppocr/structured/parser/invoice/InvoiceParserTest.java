@@ -93,6 +93,97 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertNull(r.getPayee());
 	}
 
+	/**
+	 * PDF 文本层常见场景：fragment-merged 标签框（label 各字符间夹全角空格 + `:` + 值）、
+	 * 密码区散落字符（数字 + `<>` 混排）、全角空格分隔的表头（`金　额` / `税　额`）、
+	 * 明细含冲账行（`-0.20` + 免税）。
+	 */
+	@Test
+	void parse_pdfFragmentMergedLabels() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			// 顶部
+			box("发票代码:000000000000", 432, 25, 535, 32),
+			box("发票号码:00000000", 432, 40, 515, 46),
+			box("开票日期:2024年01月01日", 432, 54, 538, 60),
+			// 购方（fragment-merged + 全角空格 + `:`）
+			box("名　　　　称:示例购方科技有限公司", 48, 89, 227, 95),
+			box("纳税人识别号:910000000000000000", 48, 103, 208, 110),
+			box("地 址、电 话:", 48, 118, 105, 124),
+			box("开户行及账号:0000000000", 48, 134, 107, 139),
+			// 销方
+			box("名　　　　称:示例销方科技有限公司", 48, 299, 216, 305),
+			box("纳税人识别号:910000000000000000", 48, 312, 209, 318),
+			box("地 址、电 话:示例市示例区示例路1号0000-0000000", 48, 326, 335, 332),
+			box("开户行及账号:示例银行0000000000000000000", 48, 340, 328, 345),
+			// 密码区散落字符（PDF 文本层按字散落，含数字 + <>*）— 必须被忽略
+			box("000<00<0<*000/>000000>0+0<0", 369, 118, 586, 126),
+			box("000*+--0/000000+00000/000*00", 369, 132, 586, 140),
+			// 明细表表头（全角空格分隔）
+			box("货物或应税劳务、服务名称", 41, 152, 149, 157),
+			box("规格型号", 189, 152, 225, 157),
+			box("单位", 251, 152, 269, 157),
+			box("数　量", 292, 152, 319, 157),
+			box("单　价", 350, 152, 377, 157),
+			box("金　额", 415, 152, 442, 157),
+			box("税率", 482, 152, 500, 157),
+			box("税　额", 531, 152, 558, 157),
+			// 明细行 1：金额 99.62、税率 免税、税额 ＊＊＊
+			box("*示例服务*服务费", 25, 164, 113, 170),
+			box("次", 255, 164, 264, 170),
+			box("1", 326, 164, 331, 170),
+			box("99.62", 365, 164, 388, 170),
+			box("99.62", 448, 164, 471, 170),
+			box("免税", 486, 164, 504, 170),
+			box("＊＊＊", 562, 164, 589, 170),
+			// 明细行 2：冲账 -0.20、税率 免税、税额 ＊＊＊
+			box("*示例服务*服务费", 25, 177, 113, 183),
+			box("-0.20", 450, 177, 471, 183),
+			box("免税", 486, 177, 504, 183),
+			box("＊＊＊", 562, 177, 589, 183),
+			// 价税合计
+			box("合", 73, 262, 82, 267),
+			box("计", 109, 262, 118, 267),
+			box("￥99.42", 439, 261, 471, 267),
+			box("＊＊＊", 563, 261, 590, 267),
+			box("价税合计（大写）", 61, 279, 133, 285),
+			box("玖拾玖圆肆角贰分", 184, 279, 256, 285),
+			box("（小写）￥99.42", 465, 279, 532, 285),
+			// 底栏（fragment-merged + 半角空格 + `:`）
+			box("收 款 人:示例收款人", 31, 357, 107, 362),
+			box("复 核:示例复核人", 197, 357, 250, 362),
+			box("开 票 人:示例开票人", 318, 357, 394, 362)
+		);
+		InvoiceResult r = parse(PARSER, results);
+		assertNotNull(r);
+		// 购方
+		assertEquals("示例购方科技有限公司", r.getBuyerName());
+		assertEquals("910000000000000000", r.getBuyerTaxNo());
+		assertNull(r.getBuyerAddressPhone());
+		assertEquals("0000000000", r.getBuyerBankAccount());
+		// 销方
+		assertEquals("示例销方科技有限公司", r.getSellerName());
+		assertEquals("910000000000000000", r.getSellerTaxNo());
+		assertEquals("示例市示例区示例路1号0000-0000000", r.getSellerAddressPhone());
+		assertEquals("示例银行0000000000000000000", r.getSellerBankAccount());
+		// 明细（2 行：普通 + 冲账）
+		assertEquals(2, r.getItems().size());
+		assertEquals("*示例服务*服务费", r.getItems().get(0).getGoodsName());
+		assertEquals("99.62", r.getItems().get(0).getAmount());
+		assertEquals("免税", r.getItems().get(0).getTaxRate());
+		assertEquals("＊＊＊", r.getItems().get(0).getTaxAmount());
+		assertEquals("*示例服务*服务费", r.getItems().get(1).getGoodsName());
+		assertEquals("-0.20", r.getItems().get(1).getAmount());
+		assertEquals("免税", r.getItems().get(1).getTaxRate());
+		assertEquals("＊＊＊", r.getItems().get(1).getTaxAmount());
+		// 合计
+		assertEquals("玖拾玖圆肆角贰分", r.getTotalAmountUpper());
+		assertEquals("￥99.42", r.getTotalAmountLower());
+		// 底栏
+		assertEquals("示例收款人", r.getPayee());
+		assertEquals("示例复核人", r.getReviewer());
+		assertEquals("示例开票人", r.getIssuer());
+	}
+
 	@Test
 	void parse_invoiceCodeFallbackWhenLabelMissing() {
 		// "发票代码" / "发票号码" 标签缺失，按顶部数字框 + No 前缀兜底

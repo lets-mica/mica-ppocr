@@ -19,6 +19,7 @@ package net.dreamlu.mica.ai.ppocr.structured.parser.invoice;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.utils.PdfMagicDetector;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.Point;
@@ -27,17 +28,26 @@ import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 发票结构化解析调试入口。
  *
- * <p>替换 {@link #IMAGE_PATH} 为待调试的发票图片，运行 main 即可输出 OCR 框 + 结构化字段 + 可视化。
+ * <p>替换 {@link #INPUT_PATH} 为待调试的发票图片或 PDF 路径，运行 main 即可输出 OCR 框 + 结构化字段。
+ *
+ * <p>自动识别：
+ * <ul>
+ *   <li>图片（jpg/png/bmp）：走传统单图 OCR + 可视化框图</li>
+ *   <li>PDF：走引擎内置双通道（文本层 + 兜底 OCR），多页平铺输出</li>
+ * </ul>
  */
 public class InvoiceMain {
 
-	private static final String IMAGE_PATH = "test_images/invoice/invoice1.jpg";
+	private static final String INPUT_PATH = "test_images/invoice/invoice1.jpg";
 	private static final String VIS_PATH = "test_images/invoice/vis.png";
 
 	public static void main(String[] args) throws IOException {
@@ -50,25 +60,82 @@ public class InvoiceMain {
 			.docOrientationModelPath("models/ppocr-v6/doc_ori/doc_ori.onnx")
 			.build();
 
-		Mat img = Imgcodecs.imread(IMAGE_PATH);
-		if (img == null || img.empty()) {
-			System.err.println("无法读取图片: " + IMAGE_PATH);
+		Path inputPath = Paths.get(INPUT_PATH);
+		if (!Files.exists(inputPath)) {
+			System.err.println("输入文件不存在: " + inputPath.toAbsolutePath());
 			return;
 		}
+
 		try (PPOcrV6Engine engine = new PPOcrV6Engine(config)) {
-			List<PPOcrV6Result> results = engine.runMat(img);
-			System.out.println("Detected " + results.size() + " text regions:\n");
-			for (PPOcrV6Result r : results) {
-				int[][] b = r.box();
-				System.out.printf("  text=\"%s\"  score=%.6f  box=[(%d,%d),(%d,%d)]%n",
-					r.text(), r.score(), b[0][0], b[0][1], b[2][0], b[2][1]);
-			}
-			System.out.println("\n--- 结构化解析 ---");
 			InvoiceParser dispatcher = new InvoiceParser(engine);
+
+			// 优先嗅探头部字节判定 PDF：避免 Imgcodecs.imread 把 PDF 当图片读时返回 null
+			byte[] head = readHead(inputPath);
+			boolean isPdf = PdfMagicDetector.isPdf(head);
+
+			if (isPdf) {
+				runPdf(engine, dispatcher, inputPath);
+			} else {
+				runImage(engine, dispatcher, inputPath);
+			}
+		}
+	}
+
+	private static void runImage(PPOcrV6Engine engine, InvoiceParser dispatcher, Path inputPath) {
+		Mat img = Imgcodecs.imread(inputPath.toString());
+		if (img.empty()) {
+			System.err.println("无法读取图片: " + inputPath);
+			return;
+		}
+		try {
+			List<PPOcrV6Result> results = engine.runMat(img);
+			printOcrResults(results);
+			System.out.println("\n--- 结构化解析 ---");
 			printResult(dispatcher.parseResults(results));
-			saveVis(img, results, VIS_PATH);
+			saveVis(img, results, Paths.get(VIS_PATH));
 		} finally {
 			img.release();
+		}
+	}
+
+	private static void runPdf(PPOcrV6Engine engine, InvoiceParser dispatcher, Path inputPath) throws IOException {
+		System.out.println("检测到 PDF 输入，走 PDF 双通道（文本层优先 + OCR 兜底）。");
+		List<PPOcrV6Result> results = engine.run(inputPath);
+		printOcrResults(results);
+		System.out.println("\n--- 结构化解析（PDF 多页已平铺） ---");
+		printResult(dispatcher.parseResults(results));
+	}
+
+	private static byte[] readHead(Path path) throws IOException {
+		try {
+			byte[] buf = new byte[1024 + 8];
+			int n = 0;
+			try (java.io.InputStream in = Files.newInputStream(path)) {
+				while (n < buf.length) {
+					int read = in.read(buf, n, buf.length - n);
+					if (read < 0) {
+						break;
+					}
+					n += read;
+				}
+			}
+			if (n == buf.length) {
+				return buf;
+			}
+			byte[] out = new byte[n];
+			System.arraycopy(buf, 0, out, 0, n);
+			return out;
+		} catch (IOException e) {
+			return null;
+		}
+	}
+
+	private static void printOcrResults(List<PPOcrV6Result> results) {
+		System.out.println("Detected " + results.size() + " text regions:\n");
+		for (PPOcrV6Result r : results) {
+			int[][] b = r.box();
+			System.out.printf("  text=\"%s\"  score=%.6f  box=[(%d,%d),(%d,%d)]%n",
+				r.text(), r.score(), b[0][0], b[0][1], b[2][0], b[2][1]);
 		}
 	}
 
@@ -107,7 +174,7 @@ public class InvoiceMain {
 		System.out.println("开票人         " + inv.getIssuer());
 	}
 
-	private static void saveVis(Mat img, List<PPOcrV6Result> results, String out) {
+	private static void saveVis(Mat img, List<PPOcrV6Result> results, Path out) {
 		Mat canvas = img.clone();
 		int imgW = img.cols();
 		int imgH = img.rows();
@@ -122,7 +189,7 @@ public class InvoiceMain {
 			list.add(mop);
 			Imgproc.polylines(canvas, list, true, new Scalar(0, 255, 0), 2);
 		}
-		boolean ok = Imgcodecs.imwrite(out, canvas);
+		boolean ok = Imgcodecs.imwrite(out.toString(), canvas);
 		System.out.println(ok ? "\nVisualization saved: " + out : "Warning: failed to save visualization: " + out);
 		canvas.release();
 	}

@@ -86,14 +86,16 @@ public class VatInvoiceParser {
 		"[¥￥]\\s*\\d+(?:[,，]\\d{3})*(?:\\.\\d{1,2})?");
 	/**
 	 * 金额数字（金额/税额栏）。
+	 * <p>支持负数冲账（如 {@code -0.20}）和免税标记（全角星号 {@code ＊＊＊}）。
 	 */
 	private static final Pattern AMOUNT_NUM_PATTERN = Pattern.compile(
-		"\\d+(?:[,，]\\d{3})*(?:\\.\\d{1,2})?");
+		"-?\\d+(?:[,，]\\d{3})*(?:\\.\\d{1,2})?|＊＊＊");
 	/**
 	 * 税率。
+	 * <p>支持 {@code 免税} 标记（PDF 电子发票常见，税额对应 {@code ＊＊＊}）。
 	 */
 	private static final Pattern TAX_RATE_PATTERN = Pattern.compile(
-		"\\d{1,2}(?:\\.\\d+)?\\s*%");
+		"\\d{1,2}(?:\\.\\d+)?\\s*%|免税");
 	/**
 	 * 合并框剥前缀后允许的标点尾巴（含 "、" 等连接符，视为标签延伸）。
 	 */
@@ -111,7 +113,10 @@ public class VatInvoiceParser {
 		"税率", "税额", "合计", "价税合计", "大写", "小写",
 		"收款人", "复核", "开票人",
 		"发票代码", "发票号码", "开票日期",
-		"购买方", "销售方", "备注");
+		"购买方", "销售方", "备注",
+		// 密码区 / 备注 / 购买方等 label 的单字 fragment（PDF 文本层拆字常见），
+		// 避免右侧 y 重叠兜底时把它们误当作值（如 `地址、电话:` 空值时把 `码` 当作值）
+		"密", "码", "区", "备", "注", "购", "买", "销", "售", "方");
 
 	/**
 	 * 需要右侧多框拼接取值的标签：值常被 OCR 切成两个相邻框
@@ -400,7 +405,63 @@ public class VatInvoiceParser {
 			log.debug("发票解析 [{}]：标签 \"{}\" 按 fragment \"{}\" 取右侧 y 重叠值", debugTag, label, text);
 			return matchRightValue(results, labelBox, label, true);
 		}
+		// 4) fragment-merged 标签：text 由 label 各字符（顺序不变）夹杂空白/换行构成，
+		//    后接 `:` + 值（PDF 文本层常见，如 `名　　　　称:长沙市泽宝…` / `收 款 人:张雪丽`）。
+		//    前面 1) 2) 3) 都无法命中（既不等于也不以 label 开头也非 label 包含）。
+		LabeledMatch merged = tryMatchFragmentMergedBox(results, labelBox, label, debugTag);
+		if (merged != null) {
+			return merged;
+		}
 		return LabeledMatch.textOnly(null);
+	}
+
+	/**
+	 * fragment-merged 标签框识别：text 由 label 各单字（保持原始顺序）夹杂空白构成，
+	 * 末尾为 `:` + 值（PDF 文本层布局的常见形式，如 `名　　　　称:XXX` / `收 款 人:XXX` /
+	 * `地 址、电 话:XXX` / `开户行及账号:XXX`）。返回 null 表示不匹配此模式。
+	 *
+	 * <p>实现：先把 text 中所有空白剥除得到 compact，若 compact 仍以 label 开头则视为匹配。
+	 * 命中后再按 label 长度切分 compact 前缀（label 部分），剩余即值；
+	 * 空值或仅标点尾时改走右侧 y 重叠兜底（与分支 2 一致）。
+	 */
+	private static LabeledMatch tryMatchFragmentMergedBox(List<PPOcrV6Result> results,
+														   PPOcrV6Result labelBox,
+														   String label,
+														   String debugTag) {
+		String text = labelBox.text();
+		String compact = stripAllWhitespace(text);
+		if (compact.isEmpty() || !compact.startsWith(label)) {
+			return null;
+		}
+		// label 部分之后的内容：可能为空、可能仅为 ":" 等标点、可能为 ":value"
+		String tail = compact.substring(label.length());
+		int s = 0;
+		while (s < tail.length() && isPunct(tail.charAt(s))) s++;
+		String value = tail.substring(s);
+		if (value.isEmpty()) {
+			log.debug("发票解析 [{}]：标签 \"{}\" fragment-merged 框 \"{}\" 无值，改走右侧 y 重叠兜底",
+				debugTag, label, text);
+			return matchRightValue(results, labelBox, label, false);
+		}
+		log.debug("发票解析 [{}]：标签 \"{}\" 从 fragment-merged 框 \"{}\" 剥出值 \"{}\"",
+			debugTag, label, text, value);
+		return LabeledMatch.of(value, labelBox);
+	}
+
+	/**
+	 * 去除所有空白字符（含全角空格 / 中文空格 U+3000 / 半角空格 / Tab / 换行）。
+	 * 用于把 `名　　　　称:XXX` 归一为 `名称:XXX` 以做前缀匹配。
+	 */
+	private static String stripAllWhitespace(String s) {
+		StringBuilder sb = new StringBuilder(s.length());
+		for (int i = 0; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u3000') {
+				continue;
+			}
+			sb.append(c);
+		}
+		return sb.toString();
 	}
 
 	/**
@@ -474,6 +535,10 @@ public class VatInvoiceParser {
 			} else if (text.length() > label.length() && startsWithLabelCharFollowedByPunct(label, text)) {
 				// fragment 续段合并框：text 以 label 任一单字 + 标点 + 真实值构成
 				fragmentMerged.add(r);
+			} else if (isFragmentMergedBox(text, label)) {
+				// fragment-merged 框（PDF 文本层常见）：text 由 label 各字符夹杂空白构成，
+				// 后接标点（`:值`）。剥空白后以 label 开头即可识别。
+				fragmentMerged.add(r);
 			}
 		}
 		prefixes.sort(Comparator.comparingInt((PPOcrV6Result r) -> r.text().length()).reversed());
@@ -485,6 +550,16 @@ public class VatInvoiceParser {
 		all.addAll(fragmentMerged);
 		all.addAll(frags);
 		return all;
+	}
+
+	/**
+	 * 是否为 fragment-merged 标签框：text 去除所有空白后以 label 开头。
+	 * 用于识别 PDF 文本层常见的 `名　　　　称:XXX` / `收 款 人:XXX` / `地 址、电 话:XXX`。
+	 */
+	private static boolean isFragmentMergedBox(String text, String label) {
+		String compact = stripAllWhitespace(text);
+		if (compact.length() <= label.length()) return false;
+		return compact.startsWith(label);
 	}
 
 	/**
@@ -539,6 +614,8 @@ public class VatInvoiceParser {
 			if (text.isEmpty()) continue;
 			// 跳过纯字母
 			if (text.matches("[A-Za-z\\s]+")) continue;
+			// 跳过密码区散落字符（PDF 文本层按字散落成多框，含数字 + <>* 等）
+			if (isPasswordNoise(text)) continue;
 			// 跳过其它字段标签框
 			if (isOtherLabel(text)) continue;
 			// fragment 模式：跳过过短的候选（避免命中另一个标签 fragment）
@@ -640,6 +717,8 @@ public class VatInvoiceParser {
 			if (text.isEmpty()) continue;
 			// 跳过纯字母
 			if (text.matches("[A-Za-z\\s]+")) continue;
+			// 跳过密码区散落字符
+			if (isPasswordNoise(text)) continue;
 			// 跳过其它字段标签框
 			if (isOtherLabel(text)) continue;
 			int x0 = LabelMatcher.minX(r);
@@ -718,6 +797,30 @@ public class VatInvoiceParser {
 			if (t.startsWith(lbl) || t.equals(lbl)) return true;
 		}
 		return false;
+	}
+
+	/**
+	 * 判定是否为密码区散落字符：含数字且含 `<` 或 `>` 或 `*` 或 `+`/`-`/`/` 等混排。
+	 * PDF 文本层把"密码区"按字散落为多框（如 `724<94<4<*523/...`），与正常发票字段值
+	 * （名称 / 税号 / 地址电话 / 开户行账号）字符集不重叠 —— 合法值不会出现 `<` `>`。
+	 *
+	 * <p>判定策略：含 `<` 或 `>` 直接视为密码噪声；否则若同时含数字 + `*+-/`
+	 * 中至少一个且长度 ≥ 4，也视为密码噪声（防误伤带连字符的电话号）。
+	 */
+	private static boolean isPasswordNoise(String text) {
+		if (text.indexOf('<') >= 0 || text.indexOf('>') >= 0) return true;
+		boolean hasDigit = false;
+		boolean hasNoiseChar = false;
+		for (int i = 0; i < text.length(); i++) {
+			char c = text.charAt(i);
+			if (c >= '0' && c <= '9') {
+				hasDigit = true;
+			} else if (c == '*' || c == '+' || c == '/' || c == '\\') {
+				hasNoiseChar = true;
+			}
+		}
+		// - 既出现在电话号码（如 0731-82270331）也出现在密码区，仅靠 `-` 不足以判定
+		return hasDigit && hasNoiseChar && text.length() >= 4;
 	}
 
 	/**

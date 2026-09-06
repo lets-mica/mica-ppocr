@@ -289,14 +289,14 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 	}
 
 	private static PPOcrV6Result findColumnHeader(List<PPOcrV6Result> results, String label) {
-		String normalized = label.replaceAll("\\s+", "");
+		String normalized = stripAllWhitespace(label);
 		// 1) 完整等于
 		for (PPOcrV6Result r : results) {
-			if (r.text().replaceAll("\\s+", "").equals(normalized)) return r;
+			if (stripAllWhitespace(r.text()).equals(normalized)) return r;
 		}
 		// 2) 合并框（text 以 normalized 开头，如 "货物或应税劳务、服务名称"）
 		for (PPOcrV6Result r : results) {
-			String text = r.text().replaceAll("\\s+", "");
+			String text = stripAllWhitespace(r.text());
 			if (text.startsWith(normalized) && text.length() > normalized.length()) return r;
 		}
 		// 3) fragment 按 x 拼接（如 "金"+"额"）
@@ -306,7 +306,7 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 		PPOcrV6Result best = null;
 		int bestOverlap = 0;
 		for (PPOcrV6Result r : results) {
-			String text = r.text().replaceAll("\\s+", "");
+			String text = stripAllWhitespace(r.text());
 			if (text.isEmpty() || text.length() > normalized.length()) continue;
 			String suffix = normalized.substring(normalized.length() - text.length());
 			String prefix = normalized.substring(0, text.length());
@@ -335,7 +335,7 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 		if (label.length() < 2) return null;
 		List<PPOcrV6Result> candidates = new ArrayList<>();
 		for (PPOcrV6Result r : results) {
-			String text = r.text().replaceAll("\\s+", "");
+			String text = stripAllWhitespace(r.text());
 			if (text.isEmpty() || text.length() > label.length()) continue;
 			boolean allLabelChars = true;
 			for (int i = 0; i < text.length(); i++) {
@@ -355,7 +355,7 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 		int anchorCenterY = 0;
 		for (PPOcrV6Result r : candidates) {
 			if (p == label.length()) break;
-			String text = r.text().replaceAll("\\s+", "");
+			String text = stripAllWhitespace(r.text());
 			if (!text.equals(String.valueOf(label.charAt(p)))) continue;
 			if (matched.isEmpty()) {
 				anchorMinY = LabelMatcher.minY(r);
@@ -647,5 +647,23 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 
 	private static TableResult empty(List<ColumnSpec> columns) {
 		return new TableResult(new ArrayList<>());
+	}
+
+	/**
+	 * 去除所有空白字符（含全角空格 / 中文空格 U+3000 / 半角空格 / Tab / 换行）。
+	 *
+	 * <p>Java {@code \s} 默认不匹配 U+3000，故扩展字符集以兼容 PDF 文本层常见的
+	 * "金　额"、"税　额" 等带全角空格的表头。
+	 */
+	private static String stripAllWhitespace(String s) {
+		StringBuilder sb = new StringBuilder(s.length());
+		for (int i = 0; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\u3000') {
+				continue;
+			}
+			sb.append(c);
+		}
+		return sb.toString();
 	}
 }

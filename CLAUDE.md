@@ -124,7 +124,7 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 - **`preprocessor/DetectionPreprocessor`** — resize to limit-side constraints, normalize, HWC→NCHW.
 
 - **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes。
-  配合 [`DbDetParams`](file:///e:/codes/gitee/mica-ppocr/mica-ppocr-core/src/main/java/net/dreamlu/mica/ai/ppocr/postprocessor/DbDetParams.java) 不可变值对象，
+  配合 [`DbDetParams`](mica-ppocr-core/src/main/java/net/dreamlu/mica/ai/ppocr/postprocessor/DbDetParams.java) 不可变值对象，
   通过 `engine.detectMat(Mat, DbDetParams)` 可按调用临时覆盖阈值（thresh/boxThresh/unclipRatio），
   引擎不修改任何共享状态，并发安全（[issue #24](https://github.com/lets-mica/mica-ppocr/issues/24)）。
 
