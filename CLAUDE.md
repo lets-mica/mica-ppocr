@@ -43,7 +43,7 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       ├── engine/PPOcrV6Result.java
 │       ├── config/PPOcrV6Config.java
 │       ├── preprocessor/DetectionPreprocessor.java, RecognitionPreprocessor.java
-│       ├── postprocessor/DbPostProcessor.java, CtcLabelDecoder.java
+│       ├── postprocessor/DbDetParams.java, DbPostProcessor.java, CtcLabelDecoder.java
 │       ├── pdf/                          ← PDF 双通道（与 engine 同模块）
 │       │   ├── PdfOcrConfig.java         ← renderDpi / minTextChars / minReadableRatio / forceOcr
 │       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分）
@@ -123,7 +123,10 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 - **`preprocessor/DetectionPreprocessor`** — resize to limit-side constraints, normalize, HWC→NCHW.
 
-- **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes.
+- **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes。
+  配合 [`DbDetParams`](file:///e:/codes/gitee/mica-ppocr/mica-ppocr-core/src/main/java/net/dreamlu/mica/ai/ppocr/postprocessor/DbDetParams.java) 不可变值对象，
+  通过 `engine.detectMat(Mat, DbDetParams)` 可按调用临时覆盖阈值（thresh/boxThresh/unclipRatio），
+  引擎不修改任何共享状态，并发安全（[issue #24](https://github.com/lets-mica/mica-ppocr/issues/24)）。
 
 - **`preprocessor/RecognitionPreprocessor`** — batches crops, resizes, pads to common width.
 

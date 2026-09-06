@@ -33,6 +33,7 @@ import net.dreamlu.mica.ai.ppocr.pdf.PdfPageResult;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfTextExtractor;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfTextQuality;
 import net.dreamlu.mica.ai.ppocr.postprocessor.CtcLabelDecoder;
+import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DbPostProcessor;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DocOrientationPostprocessor;
 import net.dreamlu.mica.ai.ppocr.preprocessor.DetectionPreprocessor;
@@ -361,7 +362,7 @@ public final class PPOcrV6Engine implements Closeable {
 				// 嗅探失败时按图片走（保持向后兼容）
 				head = null;
 			}
-			if (head != null && PdfMagicDetector.isPdf(head)) {
+			if (PdfMagicDetector.isPdf(head)) {
 				try {
 					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), PdfOcrConfig.defaults()));
 				} catch (IOException e) {
@@ -532,7 +533,7 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
-	 * 文本检测（Mat 版）。
+	 * 文本检测（Mat 版，使用引擎默认 DB 参数）。
 	 *
 	 * <p>仅适用于「已持有 Mat 并需复用」的高级场景（如同一图跑多次推理）；
 	 * Mat 的 release 由调用方负责。一般场景请使用 {@link #detect(String)} / {@link #detect(byte[])} 等重载。
@@ -541,6 +542,32 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
 	 */
 	public DetectResult detectMat(Mat imgBgr) {
+		return detectMat(imgBgr, null);
+	}
+
+	/**
+	 * 文本检测（Mat 版，按调用覆盖 DB 参数）。
+	 *
+	 * <p>用于证件反光/弱对比等需要临时放宽 det 阈值的场景：传入 {@code null} 等价于
+	 * {@link #detectMat(Mat)}（使用引擎构造期固定的默认 DB 参数）；传入非 null 时
+	 * 本调用临时构造一个 {@link DbPostProcessor}，<strong>不修改引擎共享状态</strong>，
+	 * 线程安全，可并发调用。
+	 *
+	 * @param imgBgr    BGR 格式图像 (H, W, 3) uint8
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
+	 */
+	public DetectResult detectMat(Mat imgBgr, DbDetParams detParams) {
+		DbPostProcessor post = detParams == null
+			? detPost
+			: new DbPostProcessor(detParams.thresh(), detParams.boxThresh(), detParams.unclipRatio(), 1000, 3);
+		return detectMatInternal(imgBgr, post);
+	}
+
+	/**
+	 * 实际执行 det 推理 + 后处理。{@code detPost} 已确定，传 {@code null} 不合法。
+	 */
+	private DetectResult detectMatInternal(Mat imgBgr, DbPostProcessor dbPost) {
 		requireOpen();
 		DetectionPreprocessor.Result prep = detPre.call(imgBgr);
 		long[] shape = toLongArray(prep.shape());
@@ -552,7 +579,7 @@ public final class PPOcrV6Engine implements Closeable {
 			OnnxTensor outTensor = (OnnxTensor) result.get(detOutputName).get();
 			Mat probMat = readProbToMat(outTensor);
 			try {
-				DbPostProcessor.Result post = detPost.call(probMat, prep.imgShape());
+				DbPostProcessor.Result post = dbPost.call(probMat, prep.imgShape());
 				return new DetectResult(post.boxes(), post.scores());
 			} finally {
 				probMat.release();
