@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents when working with code in this repository.
 
 ## Project
 
@@ -102,6 +102,59 @@ models/ppocr-v6/
 CLI 默认使用 `--tier tiny`；可用 `--tier small|medium` 切换，或用 `--det-model`/`--rec-model`/`--dict` 显式指定覆盖。
 
 模型来源：`E:\codes\ai\mica-ai\model-tools\ppocr\model\out-by-spec`
+
+## Test data privacy (测试数据隐私处理 — 强制要求)
+
+`mica-ppocr-structured` 涉及 **身份证 / 银行卡 / 驾驶证 / 行驶证 / 营业执照 / 户口本 / 发票** 等高敏单据，
+任何 `src/test/**` 测试数据、示例图、golden JSON、用例 fixture **必须在入库前做隐私脱敏处理**，否则禁止提交。
+Agent 在生成、补全或 review 测试用例时，必须主动按以下规则处理：
+
+### 1. 禁止入库的原始数据
+
+- 真实姓名、身份证号、银行卡号、手机号、地址、车牌、发动机号、车架号（VIN）、统一社会信用代码、税号等。
+- 真实证件、票据的原始扫描件 / 拍照（含背景水印、印章、二维码、人脸头像等可逆推身份的要素）。
+- 任何带 EXIF / GPS / 设备指纹的原始图片或 PDF。
+- 真实发票号、订单号、流水号等可关联到具体自然人或企业的编号。
+
+### 2. 脱敏处理要求（缺一不可）
+
+- **图像层脱敏**：人脸头像、照片、二维码区域用实心矩形 / 高斯模糊 / 马赛克覆盖；保留版面结构即可。
+- **文本层脱敏**：
+  - 身份证号 → 仅保留前 6 位 + `********`，或替换为 `110000YYYYMMDDXXXX`；
+  - 姓名 → 替换为 `测试用户A` / `测试用户B` ……
+  - 银行卡号 → 仅保留后 4 位，其余 `*`；
+  - 手机号 → `138****0000`；
+  - 车牌 / VIN / 发动机号 → 替换为 `京A·00001` / `LSVXXXXXXX0000000`；
+  - 地址 → 替换为 `XX省XX市XX区XX路X号`；
+  - 发票号 / 订单号 → 用 `INV-0001` / `ORD-0001` 这类占位。
+- **元数据脱敏**：提交前用 `exiftool -all= file.jpg` 或等价命令清掉 EXIF / GPS / 创建时间 / 设备型号。
+- **文件命名脱敏**：测试资源路径中不要带真实姓名 / 编号 / 时间戳，用语义化命名
+  （`idcard-front-blurred.png`、`invoice-vat-sample.png`）。
+
+### 3. 优先使用合成 / Mock 数据
+
+- 优先用 **程序化生成** 的合成证件图片（OpenCV + PIL / Java `BufferedImage` 渲染模板 + 假字段），
+  而不是真实证件扫描件。
+- 优先用 **Mock 解析输入**（`List<PPOcrV6Result>` 直接构造 `text/box/score`），跳过真实图片，
+  既避免隐私风险，又让单测稳定不依赖模型输出。
+- Golden JSON 中的字段值统一用占位符（`"name": "测试用户A"`、`"idNo": "110000********"`）。
+
+### 4. 提交前自检 checklist
+
+- [ ] 所有 `src/test/resources/**/*.png|jpg|jpeg|pdf` 均已脱敏（人脸 / 二维码覆盖、字段替换）。
+- [ ] 所有 `*.json` / `*.txt` golden 文件中无真实身份证号 / 银行卡号 / 手机号 / 车牌。
+- [ ] `git diff --staged --name-only` 中没有可疑的 `real-` / `original-` / `用户姓名-` 命名的资源。
+- [ ] 大文件（>1MB）走 Git LFS 或外部存储，不直接进仓。
+- [ ] CI / pre-commit 钩子若配置了 `detect-secrets` / `gitleaks`，本地必须先跑通。
+
+### 5. 误处理流程
+
+若发现已经入库的真实敏感数据：
+
+1. **不要**直接 `git rm` + `commit`——那只是删引用，文件仍在历史里。
+2. 用 `git filter-repo` / `BFG Repo-Cleaner` 重写历史，必要时强制推送到所有 fork。
+3. 同步检查 wiki、issue、release notes、CI artifact、外部文档站是否泄漏。
+4. 在 PR / 内部群同步声明影响范围，必要时通报合规。
 
 ## Architecture
 
@@ -209,4 +262,3 @@ Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offs
 | spring-boot-dependencies | 2.7.18（替代原 3.5.16，3.x 是 Java 17）                          | Java 8  |
 | mica-auto                | 2.3.5（替代原 4.0.1，3.x/4.x 是 Java 17）                        | Java 8  |
 | solon                    | 4.0.6（**保留** — 实测所有 class 文件 max major = 52）              | Java 8  |
-
