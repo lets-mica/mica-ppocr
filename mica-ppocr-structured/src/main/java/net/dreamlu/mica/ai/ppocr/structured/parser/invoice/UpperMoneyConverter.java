@@ -191,7 +191,7 @@ final class UpperMoneyConverter {
 	 */
 	private static int parseJiaoFen(String s, int start) {
 		int fen = 0;
-		long curDigit = 0;
+		int curDigit = 0;
 		boolean sawJiao = false;
 		boolean sawFen = false;
 		for (int i = start; i < s.length(); i++) {
