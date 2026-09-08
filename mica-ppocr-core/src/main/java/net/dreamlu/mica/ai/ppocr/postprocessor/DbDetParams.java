@@ -57,10 +57,31 @@ public class DbDetParams {
 	 */
 	float unclipRatio;
 
-	private DbDetParams(float thresh, float boxThresh, float unclipRatio) {
+	/**
+	 * 最大候选框数
+	 */
+	int maxCandidates;
+
+	/**
+	 * 最小框大小
+	 */
+	int minSize;
+
+	/**
+	 * 构造 DB 参数。
+	 *
+	 * @param thresh        二值化阈值
+	 * @param boxThresh     文本框分数阈值
+	 * @param unclipRatio   扩张系数
+	 * @param maxCandidates 最大候选框数
+	 * @param minSize       最小框大小
+	 */
+	private DbDetParams(float thresh, float boxThresh, float unclipRatio, int maxCandidates, int minSize) {
 		this.thresh = thresh;
 		this.boxThresh = boxThresh;
 		this.unclipRatio = unclipRatio;
+		this.maxCandidates = maxCandidates;
+		this.minSize = minSize;
 	}
 
 	/**
@@ -72,6 +93,20 @@ public class DbDetParams {
 	 * @return 不可变参数对象
 	 */
 	public static DbDetParams of(float thresh, float boxThresh, float unclipRatio) {
-		return new DbDetParams(thresh, boxThresh, unclipRatio);
+		return of(thresh, boxThresh, unclipRatio, 1000, 3);
+	}
+
+	/**
+	 * 构造 DB 参数。
+	 *
+	 * @param thresh        二值化阈值
+	 * @param boxThresh     文本框分数阈值
+	 * @param unclipRatio   扩张系数
+	 * @param maxCandidates 最大候选框数
+	 * @param minSize       最小框大小
+	 * @return 不可变参数对象
+	 */
+	public static DbDetParams of(float thresh, float boxThresh, float unclipRatio, int maxCandidates, int minSize) {
+		return new DbDetParams(thresh, boxThresh, unclipRatio, maxCandidates, minSize);
 	}
 }

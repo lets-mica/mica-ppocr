@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.autoconfigure;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.structured.parser.bankcard.BankCardParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.business.BusinessLicenseParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
@@ -33,6 +34,7 @@ import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.springframework.context.ApplicationContext;
 
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
@@ -44,7 +46,9 @@ import java.util.*;
  * <p>持有 {@link PPOcrV6Engine} 与若干 {@link BaseStructuredParser} 实现，对外提供：
  * <ul>
  *   <li>{@link #run(String)} / {@link #run(File)} / {@link #run(Path)} / {@link #run(byte[])} /
- *       {@link #run(InputStream)} —— 纯 OCR 识别，返回散落文字框列表；</li>
+ *       {@link #run(InputStream)} —— 纯 OCR 识别，返回散落文字框列表；
+ *       每个 {@code run} 还配套一个 {@code (..., DbDetParams)} 重载，
+ *       用于按调用临时覆盖 DB 后处理参数（见 {@link DbDetParams}）；</li>
  *   <li>{@link #vehicleLicense()} / {@link #idCard()} / {@link #bankCard()} /
  *       {@link #driverLicense()} / {@link #businessLicense()} / {@link #invoice()} /
  *       {@link #trainTicket()} / {@link #taxiReceipt()} / {@link #householdRegister()} /
@@ -73,8 +77,6 @@ import java.util.*;
  * Spring 场景下由容器管理 engine 的关闭；非 Spring 场景由调用方自行关闭 engine。
  */
 public final class PPOcrTemplate {
-
-	private final ApplicationContext context;
 	private final PPOcrV6Engine engine;
 	private final Map<Class<?>, BaseStructuredParser<?>> parsers;
 
@@ -88,8 +90,8 @@ public final class PPOcrTemplate {
 	 * @throws IllegalArgumentException engine 为 null、parsers 为 null 或空、元素为 null
 	 */
 	public PPOcrTemplate(ApplicationContext context, PPOcrV6Engine engine) {
-		this.context = Objects.requireNonNull(context, "ApplicationContext must not be null");
 		this.engine = Objects.requireNonNull(engine, "PPOcrV6Engine must not be null");
+		Objects.requireNonNull(context, "ApplicationContext must not be null");
 		Map<Class<?>, BaseStructuredParser<?>> map = new LinkedHashMap<>();
 		for (BaseStructuredParser<?> parser : context.getBeansOfType(BaseStructuredParser.class).values()) {
 			if (parser == null) {
@@ -175,8 +177,90 @@ public final class PPOcrTemplate {
 		}
 		try {
 			return engine.run(CollUtil.readAllBytes(in));
-		} catch (java.io.IOException e) {
-			throw new java.io.UncheckedIOException(e);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+	}
+
+	/**
+	 * 纯 OCR 识别（按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>{@code detParams} 为 {@code null} 时使用引擎默认参数；非 null 时本次调用临时构造后处理，
+	 * 不修改引擎共享状态，线程安全。详见 {@link PPOcrV6Engine#run(String, DbDetParams)}。
+	 *
+	 * @param imagePath 图片或 PDF 路径
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 */
+	public List<PPOcrV6Result> run(String imagePath, DbDetParams detParams) {
+		if (imagePath == null || imagePath.isEmpty()) {
+			throw new IllegalArgumentException("imagePath must not be empty");
+		}
+		return run(CollUtil.pathOf(imagePath), detParams);
+	}
+
+	/**
+	 * 纯 OCR 识别（按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * @param imageFile 图片或 PDF 文件
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 */
+	public List<PPOcrV6Result> run(File imageFile, DbDetParams detParams) {
+		if (imageFile == null) {
+			throw new IllegalArgumentException("imageFile must not be null");
+		}
+		return run(imageFile.toPath(), detParams);
+	}
+
+	/**
+	 * 纯 OCR 识别（按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>兼容非默认文件系统（如 ZIP / JIMFS / 内存 FS）：优先走 native 文件读取，
+	 * 不支持的 FileSystem 自动退回 {@code Files.readAllBytes}。
+	 *
+	 * @param imagePath 图片或 PDF 路径
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 * @throws UncheckedIOException 读取字节时发生 IO 异常
+	 */
+	public List<PPOcrV6Result> run(Path imagePath, DbDetParams detParams) {
+		return engine.run(imagePath, detParams);
+	}
+
+	/**
+	 * 纯 OCR 识别（按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>PDF 解析失败时由 engine 内部包为 {@link java.io.UncheckedIOException} 抛出。
+	 *
+	 * @param imgBytes  图片或 PDF 字节
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 */
+	public List<PPOcrV6Result> run(byte[] imgBytes, DbDetParams detParams) {
+		return engine.run(imgBytes, detParams);
+	}
+
+	/**
+	 * 纯 OCR 识别（按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部读取全部流为 byte[] 后调用 {@code engine.run(byte[], DbDetParams)}。
+	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
+	 *
+	 * <p>流读取失败时包为 {@link java.io.UncheckedIOException} 抛出。
+	 *
+	 * @param in        图片或 PDF 输入流
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 */
+	public List<PPOcrV6Result> run(InputStream in, DbDetParams detParams) {
+		if (in == null) {
+			throw new IllegalArgumentException("InputStream must not be null");
+		}
+		try {
+			return engine.run(CollUtil.readAllBytes(in), detParams);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
 		}
 	}
 

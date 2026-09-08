@@ -44,11 +44,7 @@ import java.util.List;
 @ToString
 @RequiredArgsConstructor
 public final class DbPostProcessor {
-	private final float thresh;
-	private final float boxThresh;
-	private final float unclipRatio;
-	private final int maxCandidates;
-	private final int minSize;
+	private final DbDetParams dbDetParams;
 
 	/**
 	 * 执行 DB 后处理。
@@ -83,7 +79,7 @@ public final class DbPostProcessor {
 
 			Mat segmentation = new Mat();
 			try {
-				Imgproc.threshold(workingProb, segmentation, thresh, 1.0, Imgproc.THRESH_BINARY);
+				Imgproc.threshold(workingProb, segmentation, dbDetParams.thresh(), 1.0, Imgproc.THRESH_BINARY);
 				return extractBoxes(workingProb, segmentation, srcW, srcH);
 			} finally {
 				segmentation.release();
@@ -114,6 +110,10 @@ public final class DbPostProcessor {
 			List<int[][]> boxList = new ArrayList<>();
 			List<Float> scoreList = new ArrayList<>();
 
+			int maxCandidates = dbDetParams.maxCandidates();
+			int minSize = dbDetParams.minSize();
+			float boxThresh = dbDetParams.boxThresh();
+			float unclipRatio = dbDetParams.unclipRatio();
 			int n = Math.min(contours.size(), maxCandidates);
 			for (int i = 0; i < n; i++) {
 				MatOfPoint contour = contours.get(i);

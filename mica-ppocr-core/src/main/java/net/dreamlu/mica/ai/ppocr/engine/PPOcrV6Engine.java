@@ -20,7 +20,6 @@ import ai.onnxruntime.OnnxTensor;
 import ai.onnxruntime.OrtEnvironment;
 import ai.onnxruntime.OrtException;
 import ai.onnxruntime.OrtSession;
-import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -40,25 +39,21 @@ import net.dreamlu.mica.ai.ppocr.preprocessor.DetectionPreprocessor;
 import net.dreamlu.mica.ai.ppocr.preprocessor.DocOrientationPreprocessor;
 import net.dreamlu.mica.ai.ppocr.preprocessor.RecognitionPreprocessor;
 import net.dreamlu.mica.ai.ppocr.utils.*;
-import org.opencv.core.Core;
-import org.opencv.core.Mat;
-import org.opencv.core.MatOfByte;
-import org.opencv.imgcodecs.Imgcodecs;
 import nu.pattern.OpenCV;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
+import org.opencv.core.Core;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfByte;
+import org.opencv.imgcodecs.Imgcodecs;
 
 import java.awt.image.BufferedImage;
-import java.io.Closeable;
-import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.UncheckedIOException;
+import java.io.*;
 import java.nio.FloatBuffer;
-import java.nio.file.Files;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -89,33 +84,106 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 public final class PPOcrV6Engine implements Closeable {
+	/**
+	 * ONNX Runtime 全局环境，进程内单例。
+	 */
 	private final OrtEnvironment env;
+	/**
+	 * det (文本检测) ONNX 会话。
+	 */
 	private final OrtSession detSession;
+	/**
+	 * rec (文本识别) ONNX 会话。
+	 */
 	private final OrtSession recSession;
+	/**
+	 * doc_ori (文档方向分类) ONNX 会话；未启用时为 {@code null}。
+	 */
 	private final OrtSession docOriSession;
+	/**
+	 * det 模型输入张量名称。
+	 */
 	private final String detInputName;
+	/**
+	 * rec 模型输入张量名称。
+	 */
 	private final String recInputName;
+	/**
+	 * doc_ori 模型输入张量名称；未启用时为 {@code null}。
+	 */
 	private final String docOriInputName;
+	/**
+	 * det 模型输出张量名称。
+	 */
 	private final String detOutputName;
+	/**
+	 * rec 模型输出张量名称。
+	 */
 	private final String recOutputName;
+	/**
+	 * doc_ori 模型输出张量名称；未启用时为 {@code null}。
+	 */
 	private final String docOriOutputName;
 
+	/**
+	 * 检测预处理：resize + 归一化 + HWC→NCHW。
+	 */
 	private final DetectionPreprocessor detPre;
+	/**
+	 * 检测后处理：DB 二值图 → contours → boxes（线程共享默认值）。
+	 */
 	private final DbPostProcessor detPost;
+	/**
+	 * 识别预处理：按宽高比分桶 + 动态 padding。
+	 */
 	private final RecognitionPreprocessor recPre;
+	/**
+	 * 识别后处理：CTC greedy decode → text + score。
+	 */
 	private final CtcLabelDecoder recPost;
+	/**
+	 * 识别批大小。
+	 */
 	private final int recBatchSize;
+	/**
+	 * 文档方向分类预处理。
+	 */
 	private final DocOrientationPreprocessor docOriPre;
+	/**
+	 * 文档方向分类后处理。
+	 */
 	private final DocOrientationPostprocessor docOriPost;
+	/**
+	 * 是否启用文档方向分类（由 {@link PPOcrV6Config#isUseDocOrientationClassify()} 决定）。
+	 */
 	private final boolean docOriEnabled;
+	/**
+	 * PDF 文本层抽取器（线程安全，复用）。
+	 */
 	private final PdfTextExtractor pdfExtractor = new PdfTextExtractor();
 
+	/**
+	 * 引擎是否已关闭，{@link #close()} 幂等保护。
+	 */
 	private boolean closed = false;
 
 	/**
 	 * 创建 PP-OCRv6 推理引擎。
 	 *
-	 * @param config 配置参数
+	 * <p>构造过程：
+	 * <ol>
+	 *     <li>校验配置（模型路径非空、recBatchSize ≥ 1、recImageShape 长度=3、doc_ori 配置自洽）</li>
+	 *     <li>按 {@link OrtProviders} 选择 EP 并填充 {@link OrtSession.SessionOptions}</li>
+	 *     <li>创建 det / rec / (可选) doc_ori 三个 ONNX 会话</li>
+	 *     <li>读取每个会话的输入输出名，构造预处理与后处理实例</li>
+	 * </ol>
+	 *
+	 * <p>构造期失败时会自动关闭已创建的 ONNX 会话（避免 native 句柄泄漏），
+	 * 抛出的 {@link RuntimeException} 包含原因。
+	 *
+	 * @param config 配置参数（不可为 null）
+	 * @throws IllegalArgumentException 配置不合法（路径为空、批次/形状非法、doc_ori 配置未自洽）
+	 * @throws RuntimeException         创建 ONNX 会话失败
 	 */
 	public PPOcrV6Engine(PPOcrV6Config config) {
 		requirePath(config.getDetModelPath(), "detModelPath");
@@ -170,8 +238,7 @@ public final class PPOcrV6Engine implements Closeable {
 			this.detOutputName = detSession.getOutputNames().iterator().next();
 			this.recOutputName = recSession.getOutputNames().iterator().next();
 			this.detPre = new DetectionPreprocessor(config.getDetLimitSideLen(), config.getDetLimitType(), config.getDetMaxSideLimit());
-			this.detPost = new DbPostProcessor(config.getDetThresh(), config.getDetBoxThresh(), config.getDetUnclipRatio(),
-				1000, 3);
+			this.detPost = new DbPostProcessor(DbDetParams.of(config.getDetThresh(), config.getDetBoxThresh(), config.getDetUnclipRatio()));
 			this.recPre = new RecognitionPreprocessor(config.getRecImageShape()[1], 320, 3200);
 			this.recPost = new CtcLabelDecoder(config.getRecCharDictPath());
 			this.recBatchSize = config.getRecBatchSize();
@@ -193,6 +260,13 @@ public final class PPOcrV6Engine implements Closeable {
 			this.detPre, this.recPre, this.recPost.vocabSize(), docOriEnabled ? "enabled" : "disabled");
 	}
 
+	/**
+	 * 静默关闭 ONNX 会话（用于构造失败时的清理路径）。
+	 *
+	 * <p>{@code session} 为 {@code null} 时直接返回；关闭异常仅在 debug 级别记录，不上抛。
+	 *
+	 * @param session 待关闭的会话（可为 {@code null}）
+	 */
 	private static void silentClose(OrtSession session) {
 		if (session == null) {
 			return;
@@ -204,6 +278,13 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 	}
 
+	/**
+	 * 校验模型路径配置项非空。
+	 *
+	 * @param path 路径值
+	 * @param name 配置项名（用于错误信息）
+	 * @throws IllegalArgumentException 路径为 null 或空字符串
+	 */
 	private static void requirePath(String path, String name) {
 		if (path == null) {
 			throw new IllegalArgumentException(name + " is null");
@@ -259,11 +340,21 @@ public final class PPOcrV6Engine implements Closeable {
 		return mat;
 	}
 
+	/**
+	 * 构造期失败时的清理入口：关闭已创建的 ONNX 会话，并把所有关闭异常作为抑制异常挂到 cause 上抛出。
+	 *
+	 * @param cause 引发清理的原始异常（不可为 null）
+	 */
 	private void closeOnInitFailure(Exception cause) {
 		closeSessions(cause::addSuppressed);
 		closed = true;
 	}
 
+	/**
+	 * 关闭引擎并释放所有 ONNX 会话。
+	 *
+	 * <p>幂等：多次调用只有第一次会真正关闭会话。释放失败仅在 debug 级别记录，不上抛。
+	 */
 	@Override
 	public void close() {
 		if (!closed) {
@@ -273,6 +364,11 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 	}
 
+	/**
+	 * 依次关闭 det / rec / doc_ori 三个 ONNX 会话，跳过 null 项；每个会话的关闭异常交由 {@code onError} 处理。
+	 *
+	 * @param onError 关闭异常回调（不会为 null）
+	 */
 	private void closeSessions(Consumer<OrtException> onError) {
 		for (OrtSession session : new OrtSession[]{detSession, recSession, docOriSession}) {
 			if (session == null) {
@@ -290,6 +386,11 @@ public final class PPOcrV6Engine implements Closeable {
 	// 推荐公开 API：byte[] / File / String，内部自动管理 Mat 生命周期
 	// ==================================================================
 
+	/**
+	 * 校验引擎未关闭。所有公开推理入口都应在第一行调用此方法。
+	 *
+	 * @throws IllegalStateException 引擎已 {@link #close()} 关闭
+	 */
 	private void requireOpen() {
 		if (closed) {
 			throw new IllegalStateException("PPOcrV6Engine has been closed and can no longer be used.");
@@ -308,7 +409,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
-	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
 	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
@@ -318,7 +419,7 @@ public final class PPOcrV6Engine implements Closeable {
 		if (imagePath == null || imagePath.isEmpty()) {
 			throw new IllegalArgumentException("imagePath must not be empty");
 		}
-		return run(CollUtil.pathOf(imagePath));
+		return run(CollUtil.pathOf(imagePath), null);
 	}
 
 	/**
@@ -328,6 +429,25 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
 	 *
+	 * @param imagePath 图片或 PDF 路径
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 * @throws IllegalArgumentException 路径为空、文件不存在或解码失败
+	 */
+	public List<PPOcrV6Result> run(String imagePath, DbDetParams detParams) {
+		if (imagePath == null || imagePath.isEmpty()) {
+			throw new IllegalArgumentException("imagePath must not be empty");
+		}
+		return run(CollUtil.pathOf(imagePath), detParams);
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
+	 *
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
+	 *
 	 * @param imageFile 图片或 PDF 文件
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 文件不存在或解码失败
@@ -336,13 +456,34 @@ public final class PPOcrV6Engine implements Closeable {
 		if (imageFile == null) {
 			throw new IllegalArgumentException("imageFile must not be null");
 		}
-		return run(imageFile.toPath());
+		return run(imageFile.toPath(), null);
 	}
 
 	/**
 	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
 	 *
-	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理。
+	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
+	 *
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * @param imageFile 图片或 PDF 文件
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 * @throws IllegalArgumentException 文件不存在或解码失败
+	 */
+	public List<PPOcrV6Result> run(File imageFile, DbDetParams detParams) {
+		if (imageFile == null) {
+			throw new IllegalArgumentException("imageFile must not be null");
+		}
+		return run(imageFile.toPath(), detParams);
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
+	 *
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
 	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
@@ -350,6 +491,23 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public List<PPOcrV6Result> run(Path imagePath) {
+		return run(imagePath, null);
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
+	 *
+	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * @param imagePath 图片或 PDF 路径
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）
+	 * @throws IllegalArgumentException 路径为 null、文件不存在或解码失败
+	 * @throws UncheckedIOException 读取字节时发生 IO 异常
+	 */
+	public List<PPOcrV6Result> run(Path imagePath, DbDetParams detParams) {
 		if (imagePath == null) {
 			throw new IllegalArgumentException("imagePath must not be null");
 		}
@@ -364,7 +522,7 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			if (PdfMagicDetector.isPdf(head)) {
 				try {
-					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), PdfOcrConfig.defaults()));
+					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), PdfOcrConfig.defaults(), detParams));
 				} catch (IOException e) {
 					throw new UncheckedIOException(e);
 				}
@@ -372,7 +530,7 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 		Mat mat = loadMat(imagePath);
 		try {
-			return runMat(mat);
+			return runMat(mat, detParams);
 		} finally {
 			mat.release();
 		}
@@ -394,19 +552,38 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws IllegalArgumentException 字节为空或解码失败
 	 */
 	public List<PPOcrV6Result> run(byte[] imgBytes) {
+		return run(imgBytes, null);
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>典型场景：Spring Boot 上传 {@code MultipartFile.getBytes()}。
+	 *
+	 * <p>自动嗅探输入：字节流以 {@code %PDF-} 魔数开头时，自动按 PDF 双通道处理并
+	 * 平铺所有页的文本框列表。其它格式按图片走。
+	 *
+	 * <p>PDF 解析失败时抛 {@link UncheckedIOException}（unchecked），避免强制 try-catch。
+	 *
+	 * @param imgBytes  图片或 PDF 字节（PNG / JPG / BMP / PDF）
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 * @throws IllegalArgumentException 字节为空或解码失败
+	 */
+	public List<PPOcrV6Result> run(byte[] imgBytes, DbDetParams detParams) {
 		if (imgBytes == null || imgBytes.length == 0) {
 			throw new IllegalArgumentException("imgBytes must not be empty");
 		}
 		if (PdfMagicDetector.isPdf(imgBytes)) {
 			try {
-				return flattenPdfPages(runPdfBytes(imgBytes, PdfOcrConfig.defaults()));
+				return flattenPdfPages(runPdfBytes(imgBytes, PdfOcrConfig.defaults(), detParams));
 			} catch (IOException e) {
 				throw new UncheckedIOException(e);
 			}
 		}
 		Mat mat = decodeMat(imgBytes);
 		try {
-			return runMat(mat);
+			return runMat(mat, detParams);
 		} finally {
 			mat.release();
 		}
@@ -427,11 +604,30 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws IllegalArgumentException 输入流为 null
 	 */
 	public List<PPOcrV6Result> run(InputStream in) {
+		return run(in, null);
+	}
+
+	/**
+	 * 完整 OCR 流程：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>内部读取全部流为 byte[] 后转发到 {@link #run(byte[], DbDetParams)}。
+	 * 流由调用方负责关闭（{@code CollUtil.readAllBytes(InputStream)} 会读到 EOF 但不 close）。
+	 *
+	 * <p>自动嗅探输入：若为 PDF，按 PDF 双通道处理。
+	 *
+	 * <p>流读取失败时包为 {@link UncheckedIOException} 抛出，调用方免 try-catch。
+	 *
+	 * @param in        图片或 PDF 输入流
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列，PDF 多页平铺）
+	 * @throws IllegalArgumentException 输入流为 null
+	 */
+	public List<PPOcrV6Result> run(InputStream in, DbDetParams detParams) {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
 		try {
-			return run(CollUtil.readAllBytes(in));
+			return run(CollUtil.readAllBytes(in), detParams);
 		} catch (IOException e) {
 			throw new UncheckedIOException(e);
 		}
@@ -468,10 +664,11 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 文本检测（仅检测，不识别）。
 	 *
-	 * <p>内部自动解码为 BGR Mat 并在方法返回时 release。
+	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
 	 * @param imagePath 图片路径
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
+	 * @throws IllegalArgumentException 路径为空、文件不存在或解码失败
 	 */
 	public DetectResult detect(String imagePath) {
 		if (imagePath == null || imagePath.isEmpty()) {
@@ -485,6 +682,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param imageFile 图片文件
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
+	 * @throws IllegalArgumentException 文件不存在或解码失败
 	 */
 	public DetectResult detect(File imageFile) {
 		if (imageFile == null) {
@@ -502,6 +700,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param imagePath 图片路径
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
+	 * @throws IllegalArgumentException 路径为 null、文件不存在或解码失败
 	 */
 	public DetectResult detect(Path imagePath) {
 		if (imagePath == null) {
@@ -522,6 +721,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param imgBytes 图片字节
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
+	 * @throws IllegalArgumentException 字节为空或解码失败
 	 */
 	public DetectResult detect(byte[] imgBytes) {
 		Mat mat = decodeMat(imgBytes);
@@ -558,14 +758,20 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
 	 */
 	public DetectResult detectMat(Mat imgBgr, DbDetParams detParams) {
-		DbPostProcessor post = detParams == null
-			? detPost
-			: new DbPostProcessor(detParams.thresh(), detParams.boxThresh(), detParams.unclipRatio(), 1000, 3);
+		DbPostProcessor post = detParams == null ? detPost : new DbPostProcessor(detParams);
 		return detectMatInternal(imgBgr, post);
 	}
 
 	/**
-	 * 实际执行 det 推理 + 后处理。{@code detPost} 已确定，传 {@code null} 不合法。
+	 * 实际执行 det 推理 + 后处理。{@code dbPost} 已由调用方选定（默认或临时构造），不可为 null。
+	 *
+	 * <p>本方法分配并自动释放以下资源：det 输入/输出 {@link OnnxTensor}、
+	 * 由 {@link #readProbToMat} 转换得到的概率 Mat；{@code imgBgr} 的生命周期由调用方负责。
+	 *
+	 * @param imgBgr BGR 格式图像 (H, W, 3) uint8
+	 * @param dbPost 已确定的后处理器（非 null）
+	 * @return 检测结果
+	 * @throws RuntimeException 推理失败（包装 {@link OrtException}）
 	 */
 	private DetectResult detectMatInternal(Mat imgBgr, DbPostProcessor dbPost) {
 		requireOpen();
@@ -666,12 +872,34 @@ public final class PPOcrV6Engine implements Closeable {
 	 * doc_ori 应用到原图的顺时针旋转角度（0/90/180/270）
 	 */
 	public List<PPOcrV6Result> runMat(Mat imgBgr) {
+		return runMat(imgBgr, null);
+	}
+
+	/**
+	 * 完整 OCR 流程（Mat 版，按调用覆盖 DB 参数）：检测 → 排序 → 裁剪 → 识别。
+	 *
+	 * <p>用于证件反光/弱对比等需要临时放宽 det 阈值的场景：传入 {@code null} 等价于
+	 * {@link #runMat(Mat)}（使用引擎构造期固定的默认 DB 参数）；传入非 null 时
+	 * 本调用临时构造一个 {@link DbPostProcessor}，<strong>不修改引擎共享状态</strong>，
+	 * 线程安全，可并发调用。
+	 *
+	 * <p>仅适用于「已持有 Mat 并需复用」的高级场景（如同一图跑多次推理）；
+	 * Mat 的 release 由调用方负责。一般场景请使用 {@link #run(String, DbDetParams)} /
+	 * {@link #run(byte[], DbDetParams)} / {@link #run(Path, DbDetParams)} 等重载。
+	 *
+	 * @param imgBgr    BGR 格式图像 (H, W, 3) uint8
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（按阅读顺序排列）；
+	 * 启用 doc_ori 时每个 {@link PPOcrV6Result#rotatedDegrees()} 记录
+	 * doc_ori 应用到原图的顺时针旋转角度（0/90/180/270）
+	 */
+	public List<PPOcrV6Result> runMat(Mat imgBgr, DbDetParams detParams) {
 		requireOpen();
 		// 文档方向分类（可选）：根据整图方向把图片旋转到正向，再走检测
 		DocOriRotated rotatedInfo = classifyAndRotateDocOrientation(imgBgr);
 		Mat rotated = rotatedInfo.mat();
 		try {
-			List<PPOcrV6Result> results = runOnMat(rotated);
+			List<PPOcrV6Result> results = runOnMat(rotated, detParams);
 			if (rotatedInfo.degrees() == 0) {
 				return results;
 			}
@@ -691,10 +919,24 @@ public final class PPOcrV6Engine implements Closeable {
 
 	/**
 	 * 在已正向化的 Mat 上跑核心 OCR 流水线（检测 → 排序 → 裁剪 → 识别）。
-	 * 内部负责所有 crop Mat 的 release。
+	 *
+	 * <p>本方法负责：
+	 * <ul>
+	 *     <li>调 det 推理并按 {@code detParams} 后处理；</li>
+	 *     <li>把检测框排序成阅读顺序；</li>
+	 *     <li>按四边形框裁剪出 crop Mat，<strong>内部负责释放</strong>；</li>
+	 *     <li>对非空 crop 跑 rec 推理并组装 {@link PPOcrV6Result}。</li>
+	 * </ul>
+	 *
+	 * <p>{@link CropUtil#cropByPolys} 对退化的多边形会返回 {@code null}，对应位置的 box 会被跳过；
+	 * 本方法不抛异常，整体返回空列表表示无文本。
+	 *
+	 * @param imgBgr    正向化后的 BGR 图像
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 识别结果列表（已按阅读顺序排列）
 	 */
-	private List<PPOcrV6Result> runOnMat(Mat imgBgr) {
-		DetectResult dr = detectMat(imgBgr);
+	private List<PPOcrV6Result> runOnMat(Mat imgBgr, DbDetParams detParams) {
+		DetectResult dr = detectMat(imgBgr, detParams);
 		if (dr.boxes().length == 0) {
 			return CollUtil.listOf();
 		}
@@ -726,7 +968,12 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
-	 * 释放裁剪 Mat 列表中所有非空元素。允许列表中含 null（来自 {@link CropUtil#cropByPolys} 的无效裁剪）。
+	 * 释放裁剪 Mat 列表中所有非空元素。
+	 *
+	 * <p>允许列表中含 {@code null}（来自 {@link CropUtil#cropByPolys} 对退化多边形的无效裁剪），
+	 * 调用 {@link Mat#release()} 前会先判空。
+	 *
+	 * @param crops 裁剪 Mat 列表（可含 null）
 	 */
 	private static void releaseCrops(List<Mat> crops) {
 		for (Mat crop : crops) {
@@ -822,6 +1069,15 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 	}
 
+	/**
+	 * 把 {@code int[]} 形状转换为 ONNX Runtime 要求的 {@code long[]}。
+	 *
+	 * <p>ONNX Runtime Java API 要求 tensor shape 为 {@code long[]}；常见预处理输出是
+	 * {@code int[]}，此处做一次零拷贝转换。
+	 *
+	 * @param arr 输入形状（不可为 null）
+	 * @return 等价的 long 数组
+	 */
 	private long[] toLongArray(int[] arr) {
 		long[] out = new long[arr.length];
 		for (int i = 0; i < arr.length; i++) {
@@ -835,6 +1091,12 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>合并原先的 readProb2D + probToMat 两步，消除 float[][] 中间层：
 	 * tensor FloatBuffer → flat[] → Mat.put()，省掉 2 次冗余拷贝。
+	 *
+	 * <p>调用方负责释放返回值；本方法内部仅在 {@link Mat#put} 抛出时回收尚未交付的 Mat。
+	 *
+	 * @param tensor det 输出张量 [1, 1, H, W]
+	 * @return 概率图 Mat（H, W, CV_32F）
+	 * @throws OrtException 读取张量数据失败
 	 */
 	private Mat readProbToMat(OnnxTensor tensor) throws OrtException {
 		FloatBuffer buf = tensor.getFloatBuffer();
@@ -876,7 +1138,7 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
-	 * 检测结果。
+	 * 检测结果（仅 det 推理）。
 	 */
 	@Getter
 	@ToString
@@ -885,17 +1147,17 @@ public final class PPOcrV6Engine implements Closeable {
 	@Accessors(fluent = true)
 	public static class DetectResult {
 		/**
-		 * 文本框 (N, 4, 2) int
+		 * 文本框 (N, 4, 2) int，顶点顺序：左上、右上、右下、左下。
 		 */
 		private final int[][][] boxes;
 		/**
-		 * 每框分数
+		 * 每框分数，与 {@code boxes} 一一对应。
 		 */
 		private final float[] scores;
 	}
 
 	/**
-	 * 识别结果。
+	 * 识别结果（仅 rec 推理）。
 	 */
 	@Getter
 	@ToString
@@ -904,11 +1166,11 @@ public final class PPOcrV6Engine implements Closeable {
 	@Accessors(fluent = true)
 	public static class RecognizeResult {
 		/**
-		 * 识别文本
+		 * 识别文本数组，与输入图像列表一一对应。
 		 */
 		private final String[] texts;
 		/**
-		 * 每条文本的置信度
+		 * 每条文本的置信度，与 {@code texts} 一一对应。
 		 */
 		private final float[] scores;
 	}
@@ -930,6 +1192,22 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws IOException PDF 解析失败
 	 */
 	private List<PdfPageResult> runPdfBytes(byte[] pdfBytes, PdfOcrConfig config) throws IOException {
+		return runPdfBytes(pdfBytes, config, null);
+	}
+
+	/**
+	 * PDF 双通道解析（核心入口）。
+	 *
+	 * <p>按 {@link PdfOcrConfig} 配置：每页先尝试文本层坐标抽取，
+	 * 文本质量不达标时降级到渲染 + OCR。
+	 *
+	 * @param pdfBytes  PDF 字节
+	 * @param config    PDF 配置（不可为 null）
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析失败
+	 */
+	private List<PdfPageResult> runPdfBytes(byte[] pdfBytes, PdfOcrConfig config, DbDetParams detParams) throws IOException {
 		if (config == null) {
 			throw new IllegalArgumentException("config must not be null");
 		}
@@ -941,12 +1219,15 @@ public final class PPOcrV6Engine implements Closeable {
 				"input bytes are not a PDF (missing %PDF- magic); use run(byte[]) for images");
 		}
 		try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
-			return runPdfPages(doc, config);
+			return runPdfPages(doc, config, detParams);
 		}
 	}
 
 	/**
 	 * 将 PDF 多页结果平铺为单层 {@link PPOcrV6Result} 列表（按页顺序拼接）。
+	 *
+	 * @param pages 按页结果列表（不可为 null）
+	 * @return 平铺后的结果列表
 	 */
 	private static List<PPOcrV6Result> flattenPdfPages(List<PdfPageResult> pages) {
 		return pages.stream()
@@ -955,6 +1236,20 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config) throws IOException {
+		return runPdfPages(doc, config, null);
+	}
+
+	/**
+	 * 按 {@code config} 遍历所有页：文本层质量达标时直接走 {@link PdfTextExtractor}，
+	 * 否则降级到渲染 + OCR。{@code forceOcr=true} 时跳过文本层抽取，全走 OCR。
+	 *
+	 * @param doc       已加载的 PDF 文档（不可为 null）
+	 * @param config    PDF 配置（不可为 null）
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return per-page 结果列表
+	 * @throws IOException 渲染失败
+	 */
+	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config, DbDetParams detParams) throws IOException {
 		requireOpen();
 		int pageCount = doc.getNumberOfPages();
 		List<PdfPageResult> pages = new ArrayList<>(pageCount);
@@ -962,7 +1257,7 @@ public final class PPOcrV6Engine implements Closeable {
 		for (int i = 0; i < pageCount; i++) {
 			if (config.isForceOcr()) {
 				renderer = ensureRenderer(doc, renderer);
-				pages.add(ocrPdfPage(i, renderer, config));
+				pages.add(ocrPdfPage(i, renderer, config, detParams));
 				continue;
 			}
 			List<PPOcrV6Result> textResults = pdfExtractor.extract(doc, i);
@@ -971,12 +1266,19 @@ public final class PPOcrV6Engine implements Closeable {
 				pages.add(new PdfPageResult(i, false, textResults));
 			} else {
 				renderer = ensureRenderer(doc, renderer);
-				pages.add(ocrPdfPage(i, renderer, config));
+				pages.add(ocrPdfPage(i, renderer, config, detParams));
 			}
 		}
 		return pages;
 	}
 
+	/**
+	 * 惰性构造 {@link PDFRenderer}：同一文档只需创建一个 renderer 即可复用，避免重复绑定底层资源。
+	 *
+	 * @param doc      PDF 文档
+	 * @param renderer 已有 renderer（可为空）
+	 * @return 已存在或新创建的 renderer
+	 */
 	private static PDFRenderer ensureRenderer(PDDocument doc, PDFRenderer renderer) {
 		return renderer != null ? renderer : new PDFRenderer(doc);
 	}
@@ -985,13 +1287,27 @@ public final class PPOcrV6Engine implements Closeable {
 	 * 渲染通道：按配置 DPI 渲染页面为 BGR Mat，走完整 OCR 链路。
 	 */
 	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config) throws IOException {
+		return ocrPdfPage(pageIndex, renderer, config, null);
+	}
+
+	/**
+	 * 渲染通道：按配置 DPI 渲染页面为 BGR Mat，走完整 OCR 链路。
+	 *
+	 * @param pageIndex 0-based 页索引
+	 * @param renderer  PDF 渲染器（不可为 null）
+	 * @param config    PDF 配置（不可为 null）
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 该页 OCR 结果，{@code viaOcr=true}
+	 * @throws IOException 渲染失败
+	 */
+	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config, DbDetParams detParams) throws IOException {
 		// openpnp OpenCV 本地库幂等加载（starter/solon 已被 OpenCVNativeLoader 提前加载，此处为非容器兜底）
 		OpenCV.loadLocally();
 		BufferedImage image = renderer.renderImageWithDPI(pageIndex, config.getRenderDpi(), ImageType.RGB);
 		Mat mat = BufferedImageUtils.toBgrMat(image);
 		List<PPOcrV6Result> results;
 		try {
-			results = runMat(mat);
+			results = runMat(mat, detParams);
 		} finally {
 			mat.release();
 		}
