@@ -2,6 +2,11 @@
 
 ## 发行版本
 
+### v1.2.3 - 待发布
+- feat(ppocr): run 系列方法全面支持按调用覆盖 DB 参数。`run` / `runMat` 新增 `DbDetParams` 重载（thresh / boxThresh / unclipRatio / maxCandidates / minSize），按调用临时调整检测阈值、无需改动引擎构造期配置，线程安全（临时构造 DbPostProcessor，不修改共享状态）；同步下沉到 PDF 双通道，`BaseStructuredParser` 新增 5 个 `parse(..., DbDetParams)` 重载，Spring Boot / Solon `PPOcrTemplate` 同步支持。
+- fix(ppocr): 修复词典空白 token 处理导致识别结果丢空格、英文单词粘连问题。CtcLabelDecoder 对齐 Python 参考实现（仅剥 `\n\r`），原样保留词典中间全角空格（U+3000）与末尾 ASCII 空格两个空白 token，并新增回归测试锁定。
+- fix(security): 修复发票大写金额转换 `parseJiaoFen` 的整型隐患（`curDigit` 由 long 改为 int），消除 CodeQL 告警（java/implicit-cast-in-compound-assignment）。
+
 ### v1.2.2 - 2026-09-07
 - feat(core): 新增 PDF 双通道模块 文字型 PDF；扫描件自动降级 PDFBox 渲染位图（DPI 可配，默认 200）。
 - feat(core): 新增 DbDetParams + detectMat(Mat, DbDetParams) 按调用覆盖 DB 阈值 (github issue #24) 感谢 @wangj-pc 反馈。
