@@ -124,4 +124,40 @@ class CtcLabelDecoderTest {
 		assertThrows(IllegalArgumentException.class, () ->
 			new CtcLabelDecoder("/nonexistent/dict.txt"));
 	}
+
+	/**
+	 * 回归测试：v6 词典的空白 token 行必须原样保留。
+	 *
+	 * <p>v6 词典中间有一行 U+3000 全角空格（CJK 空格），末尾还有一行 ASCII 空格
+	 * （PaddleOCR use_space_char 约定，对应模型最后一个输出类）。
+	 * 历史上 parseLines 用 stripTrailing 把它们抹成空串，导致英文单词粘连。
+	 */
+	@Test
+	void decode_preservesSpaceTokens() throws IOException {
+		Path dict = tempDir.resolve("dict-space.txt");
+		// blank=0(内置), idx1=A, idx2=　(U+3000), idx3=B, idx4=' '(末尾 ASCII 空格)
+		CollUtil.writeString(dict, "A\n　\nB\n \n", StandardCharsets.UTF_8);
+		CtcLabelDecoder decoder = new CtcLabelDecoder(dict);
+		assertEquals(5, decoder.vocabSize());
+
+		// A, blank, ' ', B, blank, U+3000, A → "A B　A"
+		int[][] indices = {{1, 0, 4, 3, 0, 2, 1}};
+		float[][] probs = {{0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f, 0.9f}};
+		CtcLabelDecoder.Result result = decoder.decode(indices, probs);
+		assertEquals("A B　A", result.texts()[0]);
+	}
+
+	/**
+	 * 回归测试：通过 byte[] 构造时同样保留空白 token 行。
+	 */
+	@Test
+	void decode_preservesSpaceTokensFromBytes() {
+		byte[] dictBytes = "A\nB\n \n".getBytes(StandardCharsets.UTF_8);
+		CtcLabelDecoder decoder = new CtcLabelDecoder(dictBytes);
+		assertEquals(4, decoder.vocabSize());
+
+		int[][] indices = {{1, 3, 2}};
+		CtcLabelDecoder.Result result = decoder.decode(indices, null);
+		assertEquals("A B", result.texts()[0]);
+	}
 }

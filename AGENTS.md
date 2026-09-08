@@ -103,6 +103,15 @@ CLI 默认使用 `--tier tiny`；可用 `--tier small|medium` 切换，或用 `-
 
 模型来源：`E:\codes\ai\mica-ai\model-tools\ppocr\model\out-by-spec`
 
+**dict.txt 格式约定（勿破坏）**：
+
+- 词典中间有一行 **U+3000 全角空格**（tiny 第 777 行、small/medium 第 620 行），是 CJK 空格 token。
+- 词典**最后一行是 ASCII 空格**（PaddleOCR `use_space_char` 约定：模型最后一个输出类 = 追加的空格，
+  `onnx vocab = dict 行数 + blank + space`，如 tiny=7180、small/medium=18714）。
+- 这两行都是"纯空白行"，任何 `strip`/`rstrip` 处理词典都会把它们抹掉，导致识别结果丢空格、英文单词粘连。
+  `CtcLabelDecoder` 已按 Python 参考实现对齐（仅剥 `\n\r`，有回归测试锁定）；重新从 `inference.yml`
+  导出词典时必须保留这两个 token（`model-tools/ppocr/convert.py` 已处理）。
+
 ## Test data privacy (测试数据隐私处理 — 强制要求)
 
 `mica-ppocr-structured` 涉及 **身份证 / 银行卡 / 驾驶证 / 行驶证 / 营业执照 / 户口本 / 发票** 等高敏单据，

@@ -18,7 +18,6 @@ package net.dreamlu.mica.ai.ppocr.postprocessor;
 
 import lombok.ToString;
 import lombok.experimental.Accessors;
-import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import net.dreamlu.mica.ai.ppocr.utils.ModelResourceLoader;
 
 import java.io.IOException;
@@ -112,8 +111,10 @@ public final class CtcLabelDecoder {
 		List<String> list = new ArrayList<>(lines.size() + 1);
 		list.add("blank");
 		for (String line : lines) {
-			// stripTrailing 是 Java 11+ 标准库方法，仅去掉尾部空白字符
-			list.add(line == null ? "" : CollUtil.stripTrailing(line));
+			// 字典行必须原样保留：v6 词典的"空格" token 是 U+3000 全角空格
+			// （独占一行），stripTrailing 会把它抹成空串导致空格丢失。
+			// 对齐 Python 参考实现的 line.rstrip("\n\r")——readAllLines 已剥离换行符。
+			list.add(line == null ? "" : line);
 		}
 		return list.toArray(new String[0]);
 	}
