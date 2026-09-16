@@ -24,6 +24,7 @@
 | ONNX Runtime | 1.18.0 | 此版本内置的原生库可兼容更多操作系统版本     |
 | OpenCV       | 4.10.0-0 | 含 Windows/Linux/macOS 原生库 |
 | JTS          | 1.20.0 | 多边形偏移（pyclipper 等价物）     |
+| PDFBox       | 3.0.8  | PDF 双通道（文本层抽取 + 渲染兜底）  |
 
 ## 2. 模型目录
 
