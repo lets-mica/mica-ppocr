@@ -16,10 +16,7 @@
 
 package net.dreamlu.mica.ai.ppocr.engine;
 
-import ai.onnxruntime.OnnxTensor;
-import ai.onnxruntime.OrtEnvironment;
-import ai.onnxruntime.OrtException;
-import ai.onnxruntime.OrtSession;
+import ai.onnxruntime.*;
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
@@ -203,7 +200,7 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			requirePath(config.getDocOrientationModelPath(), "docOrientationModelPath");
 		}
-		this.env = OrtEnvironment.getEnvironment();
+		this.env = OrtEnvironment.getEnvironment(OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR);
 
 		OrtSession detSess = null;
 		OrtSession recSess = null;
