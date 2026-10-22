@@ -29,6 +29,7 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.idcard.IdCardSide;
 import net.dreamlu.mica.ai.ppocr.structured.parser.invoice.InvoiceItem;
 import net.dreamlu.mica.ai.ppocr.structured.parser.invoice.InvoiceResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.pdd.PddLuckyBagResult;
+import net.dreamlu.mica.ai.ppocr.structured.parser.pdd.PddLuckyBagType;
 import net.dreamlu.mica.ai.ppocr.structured.parser.taxi.TaxiReceiptResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.train.TrainTicketResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.vehicle.VehicleLicenseResult;
@@ -719,6 +720,8 @@ public final class BatchOcrMain {
 		static void writePdd(Object o, PrintWriter pw) {
 			PddLuckyBagResult r = (PddLuckyBagResult) o;
 			pw.println("luckyBagCode:  " + r.getLuckyBagCode());
+			PddLuckyBagType type = r.getType();
+			pw.println("type:          " + type + " / " + (type == null ? "" : type.getDesc()));
 		}
 	}
 }

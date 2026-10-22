@@ -2,6 +2,9 @@
 
 ## 发行版本
 
+### 未发布
+- feat(pdd): 拼多多福袋结构化结果新增类型字段。新增 `PddLuckyBagType` 枚举（`LUCKY_BAG` 福袋券 / `FRUIT` 水果券 / `UNKNOWN`），`PddLuckyBagResult#getType()` 区分「百亿补贴 抽福袋」与「百亿补贴 水果分享券」两类分享图 —— 两类版式一致，按标题 / 口号 / 背景水印文案判定，判不出时为 `UNKNOWN`；`fieldBoxes` 同步回填 "type" 关键框。
+
 ### v1.2.3 - 2026-09-12
 - feat(ppocr): run 系列方法全面支持按调用覆盖 DB 参数。`run` / `runMat` 新增 `DbDetParams` 重载（thresh / boxThresh / unclipRatio / maxCandidates / minSize），按调用临时调整检测阈值、无需改动引擎构造期配置，线程安全（临时构造 DbPostProcessor，不修改共享状态）；同步下沉到 PDF 双通道，`BaseStructuredParser` 新增 5 个 `parse(..., DbDetParams)` 重载，Spring Boot / Solon `PPOcrTemplate` 同步支持。
 - fix(ppocr): 修复词典空白 token 处理导致识别结果丢空格、英文单词粘连问题。CtcLabelDecoder 对齐 Python 参考实现（仅剥 `\n\r`），原样保留词典中间全角空格（U+3000）与末尾 ASCII 空格两个空白 token，并新增回归测试锁定。github #23 感觉 @muhm21cn 反馈。

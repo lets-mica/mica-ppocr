@@ -180,9 +180,12 @@ DB 阈值、识别批大小、ORT 线程数、GPU 加速等全部走 [`PPOcrV6Co
 | 火车票 | `TrainTicketParser` | `TrainTicketResult` | — |
 | 出租车票 | `TaxiReceiptParser` | `TaxiReceiptResult` | — |
 | 户口本（常住人口登记卡） | `HouseholdRegisterParser` | `HouseholdRegisterResult` | — |
-| 拼多多福袋（8 位邀请码） | `PddLuckyBagParser` | `PddLuckyBagResult` | — |
+| 拼多多福袋（8 位邀请码 + 福袋类型） | `PddLuckyBagParser` | `PddLuckyBagResult` | — |
 
 每个解析器都提供**静态 `parse(List<PPOcrV6Result>)`**（拿到 OCR 结果后直接调）和 **SPI `parseResults(...)`**（与 `BaseStructuredParser<R>` 接口对齐，便于自定义）两种调用形式。
+
+> 拼多多福袋有两种形态 —— **福袋券**（`PddLuckyBagType.LUCKY_BAG`，「百亿补贴 抽福袋」）与**水果券**（`PddLuckyBagType.FRUIT`，「百亿补贴 水果分享券」），
+> 版式一致，按标题 / 口号 / 背景水印文案区分，结果字段 `PddLuckyBagResult#getType()`；文案缺失时为 `PddLuckyBagType.UNKNOWN`。
 
 ### 5.2 结果结构（BaseStructuredResult）
 

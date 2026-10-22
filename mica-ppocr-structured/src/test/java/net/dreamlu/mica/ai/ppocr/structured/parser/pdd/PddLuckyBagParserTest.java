@@ -30,6 +30,9 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
  * 拼多多福袋解析器单元测试。
  *
  * <p>基于 pdd1.jpg 的典型 OCR 分布（图片约 1080x1530）做 mock。
+ *
+ * <p>覆盖场景：邀请码提取（标签定位 / 合并框 / 形态兜底 / 漏字）+
+ * 福袋类型判定（福袋券 / 水果券 / 仅水印兜底 / 无法判定）。
  */
 class PddLuckyBagParserTest extends ParserTestSupport {
 
@@ -56,6 +59,7 @@ class PddLuckyBagParserTest extends ParserTestSupport {
 		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), results);
 		assertNotNull(r);
 		assertEquals("92463725", r.getLuckyBagCode());
+		assertEquals(PddLuckyBagType.LUCKY_BAG, r.getType());
 	}
 
 	/**
@@ -112,5 +116,76 @@ class PddLuckyBagParserTest extends ParserTestSupport {
 		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), CollUtil.listOf());
 		assertNotNull(r);
 		assertEquals(null, r.getLuckyBagCode());
+		assertEquals(PddLuckyBagType.UNKNOWN, r.getType());
+	}
+
+	/**
+	 * 水果券版面：标题「水果分享券」、口号「必得水果券」、水印「水果专享」，
+	 * 与福袋券版式一致，仅文案不同，类型应判为 FRUIT。
+	 */
+	@Test
+	void parse_fruitType() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("百亿补贴", 280, 30, 460, 80),
+			box("水果分享券", 500, 30, 800, 80),
+			box("搜索邀请码", 250, 160, 740, 230),
+			box("组队双方 必得水果券", 60, 280, 1020, 360),
+			box("完成2步，可与我组队一起抽水果券", 140, 410, 940, 460),
+			box("1", 230, 540, 290, 600),
+			box("打开拼多多APP", 320, 540, 750, 600),
+			box("2", 230, 660, 290, 720),
+			box("搜索以下邀请码", 320, 660, 760, 720),
+			box("214353161", 270, 880, 830, 1020),
+			box("百亿补贴", 110, 940, 230, 980),
+			box("水果专享", 110, 990, 230, 1030)
+		);
+		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), results);
+		assertNotNull(r);
+		assertEquals("214353161", r.getLuckyBagCode());
+		assertEquals(PddLuckyBagType.FRUIT, r.getType());
+	}
+
+	/**
+	 * 水果券版面的合并框场景：标题与「百亿补贴」合并成同一框，类型仍应判为 FRUIT。
+	 */
+	@Test
+	void parse_fruitTypeMergedTitle() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("百亿补贴 水果分享券", 280, 30, 800, 80),
+			box("组队双方 必得水果券", 60, 280, 1020, 360),
+			box("2 搜索以下邀请码 214353161", 230, 660, 880, 1020)
+		);
+		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), results);
+		assertNotNull(r);
+		assertEquals("214353161", r.getLuckyBagCode());
+		assertEquals(PddLuckyBagType.FRUIT, r.getType());
+	}
+
+	/**
+	 * 只识别出水印（标题 / 口号缺失）时，靠水印文案兜底判定类型。
+	 */
+	@Test
+	void parse_typeByWatermarkOnly() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("214353161", 270, 880, 830, 1020),
+			box("百亿补贴 水果专享", 110, 940, 360, 1030)
+		);
+		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), results);
+		assertNotNull(r);
+		assertEquals(PddLuckyBagType.FRUIT, r.getType());
+	}
+
+	/**
+	 * 无任何类型特征文案：类型判为 UNKNOWN，邀请码仍能正常提取。
+	 */
+	@Test
+	void parse_typeUnknown() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("92463725", 270, 880, 830, 1020)
+		);
+		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), results);
+		assertNotNull(r);
+		assertEquals("92463725", r.getLuckyBagCode());
+		assertEquals(PddLuckyBagType.UNKNOWN, r.getType());
 	}
 }

@@ -41,5 +41,7 @@ public class PddLuckyBagMain extends BaseTest<PddLuckyBagParser, PddLuckyBagResu
 	@Override
 	protected void printResult(PddLuckyBagResult r) {
 		System.out.println("luckyBagCode: " + r.getLuckyBagCode());
+		PddLuckyBagType type = r.getType();
+		System.out.println("type:         " + type + " / " + (type == null ? "" : type.getDesc()));
 	}
 }
