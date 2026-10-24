@@ -212,6 +212,10 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 - **`BaseStructuredParser<R>`** — `@FunctionalInterface` SPI 接口，规范所有解析器的入口签名 `parseResults(List<PPOcrV6Result>) → R`。
 
+- **`BaseStructuredParser.detParams()`** — 解析器声明默认 DB 检测参数的钩子（默认 `null` = 引擎默认）。
+  `parse(...)` 一站式方法会带上它；显式传入的 `DbDetParams` 优先，`null` 时回落到本钩子。
+  子类可按自己的**版面类型**声明专属检测参数，不影响同引擎上的其它解析器。
+
 - **`LabelMatcher`** — 公共骨架（`@UtilityClass`）：
 
   - `matchValue` 标签定位 + 位置匹配；
@@ -257,6 +261,28 @@ Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offs
 - No CoreML provider in ONNX Runtime Java API.
 
 - For CUDA: swap `onnxruntime`→`onnxruntime_gpu` in pom.xml and set `preferAccelerator(true)`.
+
+### 检测参数按版面分场景（DB boxScore 的语义陷阱）
+
+DB 后处理的 `boxScore` = 框（minAreaRect）内**概率图的平均值**，本质是「框内文字像素占比」。
+对「**大字号稀疏数字 + 满屏背景水印**」版面（拼多多福袋 / 邀请码海报），
+DB 会把多个大数字与水印连成一个整体轮廓，框内真正笔画只占 ~42%，
+`score` 因此低于默认 `detBoxThresh=0.6` 而被**直接丢弃**——
+现象是「rec 单独跑同一张图完全正确，但 det 一个框都没给」，极易误判为识别模型问题。
+
+**排查手法**：dump det 的概率图存 PNG（目标区域纯白高响应 = 模型看见了，是后处理毙掉的），
+再复刻 `DbPostProcessor.extractBoxes` 逐条打印 `origRect / minSideLen / score / PASS|DROP(原因)`。
+
+**正确解法**：用 **per-call** 的 `DbDetParams`（不改引擎共享状态）：
+
+- 海报 / 分享图：`DbDetParams.of(0.3f, 0.4f, 1.0f)`
+  （放宽 `boxThresh` 让稀疏大字符框过关 + 收紧 `unclipRatio` 到 1.0，避免外扩把上下水印卷进来丢字）。
+  已落地在 `PddLuckyBagParser.DET_PARAMS`，由 `BaseStructuredParser.detParams()` 钩子注入。
+
+- 证件 / 票据：沿用引擎默认（`min/64` + `0.6/1.5`），**不要**改成 `detLimitType=max` + 大
+  `detLimitSideLen` —— 那会缩小整图，小字成片漏检（实测出租车票框数 55→26）。
+
+**别做**：调大 `DbDetParams.minSize` 过滤碎片（会连小字标签一起丢，如行驶证「所有人」变 null）。
 
 ### 运行时依赖基线（已校验 Java 8 字节码）
 

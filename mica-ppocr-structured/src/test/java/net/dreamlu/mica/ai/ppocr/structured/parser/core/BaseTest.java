@@ -20,6 +20,7 @@ import lombok.experimental.Accessors;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
@@ -94,6 +95,21 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 	 * 是否启用文档方向分类（PP-OCRv6 use_doc_orientation_classify）
 	 */
 	protected static final boolean USE_DOC_ORIENTATION = true;
+
+	/**
+	 * 本 demo 使用的 DB 检测参数（per-call 覆盖）。
+	 *
+	 * <p>默认 {@code null} = 沿用引擎构造期的默认 DB 参数，
+	 * 适用于证件 / 票据等常规文档版面。
+	 *
+	 * <p>海报 / 分享图版面（如拼多多福袋邀请码）存在「大字号稀疏数字 + 背景水印」，
+	 * 需要放宽 {@code boxThresh}、收紧 {@code unclipRatio} 才能检出，
+	 * 由子类（如 {@code PddLuckyBagMain}）覆盖此钩子指定。
+	 */
+	protected DbDetParams detParams() {
+		return null;
+	}
+
 	/**
 	 * 模型档位：tiny / small / medium。
 	 *
@@ -298,7 +314,7 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 		List<PPOcrV6Result> results;
 		try (PPOcrV6Engine engine = new PPOcrV6Engine(config)) {
 			System.out.println("Running OCR...");
-			results = engine.runMat(image);
+			results = engine.runMat(image, detParams());
 
 			// 打印 OCR 结果
 			long elapsed = System.currentTimeMillis() - t0;

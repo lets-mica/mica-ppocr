@@ -17,6 +17,7 @@
 package net.dreamlu.mica.ai.ppocr.structured.parser.pdd;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
+import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseTest;
 
 /**
@@ -31,6 +32,17 @@ public class PddLuckyBagMain extends BaseTest<PddLuckyBagParser, PddLuckyBagResu
 
 	public static void main(String[] args) {
 		new PddLuckyBagMain().demo(IMAGE_PATH, VIS_PATH);
+	}
+
+	/**
+	 * 福袋海报属于「大字号稀疏数字 + 背景水印」版面，
+	 * 需使用 {@link PddLuckyBagParser#DET_PARAMS} 才能检出福袋码。
+	 *
+	 * @return 海报场景的 DB 检测参数
+	 */
+	@Override
+	protected DbDetParams detParams() {
+		return PddLuckyBagParser.DET_PARAMS;
 	}
 
 	@Override

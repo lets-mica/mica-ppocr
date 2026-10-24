@@ -90,6 +90,26 @@ public abstract class BaseStructuredParser<R> {
 	 */
 	public abstract R parseResults(List<PPOcrV6Result> results);
 
+	/**
+	 * 本解析器声明的默认 DB 检测参数（钩子）。
+	 *
+	 * <p>返回 {@code null}（默认实现）表示沿用引擎构造期的 DB 参数，
+	 * 此时 {@code parse(...)} 行为与本钩子引入前完全一致。
+	 *
+	 * <p>子类可覆盖此钩子，为自己的版面类型声明专属的检测参数。
+	 * 典型场景：<b>海报 / 分享图</b>类版面里存在「稀疏大字号数字 + 背景水印」，
+	 * DB 会把数字与水印连成一个整体轮廓，导致框内文字像素占比偏低、
+	 * 被 {@code detBoxThresh} 过滤掉（详见 {@code PddLuckyBagParser}）。
+	 *
+	 * <p>该钩子仅影响"一站式 {@code parse(...)}"内部的 OCR 推理参数，
+	 * 不修改引擎共享状态，多线程调用安全。
+	 *
+	 * @return 默认 DB 参数；{@code null} 表示使用引擎默认
+	 */
+	protected DbDetParams detParams() {
+		return null;
+	}
+
 	// ==================================================================
 	// 一站式："OCR 推理 + 结构化解析"
 	// 全部为 final，避免子类绕过 engine 注入。
@@ -136,7 +156,7 @@ public abstract class BaseStructuredParser<R> {
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public final R parse(Path imagePath) {
-		return parseResults(engine.run(imagePath));
+		return parse(imagePath, detParams());
 	}
 
 	/**
@@ -153,7 +173,7 @@ public abstract class BaseStructuredParser<R> {
 	 * @return 结构化结果
 	 */
 	public final R parse(byte[] imgBytes) {
-		return parseResults(engine.run(imgBytes));
+		return parse(imgBytes, detParams());
 	}
 
 	/**
@@ -171,7 +191,7 @@ public abstract class BaseStructuredParser<R> {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
-		return parseResults(engine.run(in));
+		return parse(in, detParams());
 	}
 
 	/**
@@ -221,7 +241,7 @@ public abstract class BaseStructuredParser<R> {
 	 * @throws UncheckedIOException 读取字节时发生 IO 异常
 	 */
 	public final R parse(Path imagePath, DbDetParams detParams) {
-		return parseResults(engine.run(imagePath, detParams));
+		return parseResults(engine.run(imagePath, effectiveDetParams(detParams)));
 	}
 
 	/**
@@ -239,7 +259,7 @@ public abstract class BaseStructuredParser<R> {
 	 * @return 结构化结果
 	 */
 	public final R parse(byte[] imgBytes, DbDetParams detParams) {
-		return parseResults(engine.run(imgBytes, detParams));
+		return parseResults(engine.run(imgBytes, effectiveDetParams(detParams)));
 	}
 
 	/**
@@ -258,6 +278,19 @@ public abstract class BaseStructuredParser<R> {
 		if (in == null) {
 			throw new IllegalArgumentException("InputStream must not be null");
 		}
-		return parseResults(engine.run(in, detParams));
+		return parseResults(engine.run(in, effectiveDetParams(detParams)));
+	}
+
+	/**
+	 * 解析本次调用实际生效的 DB 参数。
+	 *
+	 * <p>显式传入的参数优先；传入 {@code null} 时回落到 {@link #detParams()} 钩子，
+	 * 钩子未覆盖时即为 {@code null}（使用引擎构造期的默认 DB 参数）。
+	 *
+	 * @param override 调用方显式传入的 DB 参数，可为 null
+	 * @return 本次调用生效的 DB 参数，可能为 null
+	 */
+	private DbDetParams effectiveDetParams(DbDetParams override) {
+		return override != null ? override : detParams();
 	}
 }

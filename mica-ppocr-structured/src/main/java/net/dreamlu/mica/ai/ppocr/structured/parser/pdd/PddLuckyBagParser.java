@@ -21,6 +21,7 @@ import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher.LabeledMatch;
@@ -64,6 +65,36 @@ public class PddLuckyBagParser extends BaseStructuredParser<PddLuckyBagResult> {
 	 * 以兼容历史变体 / OCR 漏字（"9246372" 漏 1 位）。
 	 */
 	private static final Pattern LUCKY_BAG_PATTERN = Pattern.compile("\\d{6,12}");
+
+	/**
+	 * 本解析器专用的 DB 检测参数（海报 / 分享图场景）。
+	 *
+	 * <p>福袋海报的版面特征是<b>大字号稀疏数字 + 满屏背景水印</b>，
+	 * DB 会把「9 个大数字 + 背景水印」连成一个整体轮廓，
+	 * 框内真正的文字像素占比只有 ~42%，框平均分因此低于默认的
+	 * {@code detBoxThresh=0.6} 而被丢弃 —— 表现为「识别模型正常，但 det 一个框都没给」。
+	 *
+	 * <p>因此本解析器：
+	 * <ul>
+	 *   <li>{@code boxThresh=0.4}：放宽框分阈值，让稀疏大数字框过关；</li>
+	 *   <li>{@code unclipRatio=1.0}：收紧外扩，避免把上下两排水印框进来导致识别丢字
+	 *       （实测 unclip=1.5 会把 {@code 224717723} 识别成 {@code 22477723}）。</li>
+	 * </ul>
+	 *
+	 * <p>这是 per-call 参数，只作用于本解析器的 OCR 推理，
+	 * 不修改引擎共享状态，也不影响同引擎上的其它证件 / 票据解析器。
+	 */
+	public static final DbDetParams DET_PARAMS = DbDetParams.of(0.3f, 0.4f, 1.0f);
+
+	/**
+	 * 本解析器声明的默认 DB 检测参数（覆盖基类钩子）。
+	 *
+	 * @return {@link #DET_PARAMS}
+	 */
+	@Override
+	protected DbDetParams detParams() {
+		return DET_PARAMS;
+	}
 
 	/**
 	 * 标签候选：按优先级排序。
