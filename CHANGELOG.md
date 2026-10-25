@@ -3,6 +3,12 @@
 ## 发行版本
 
 ### 未发布
+- perf(core): 检测预处理内存融合。归一化结果直接写入 CHW 输出数组，去掉 HWC flat 中间数组与 CV_32F 中间 Mat，峰值堆内存从 2 份降到 1 份。3000×4000 图实测堆分配 275 MB → 137 MB（-50%），耗时 110 ms → 42 ms（2.6×）；uint8 → CV_32F 与 uint8 → 提升为 float 在 0~255 上逐位相同，数值与 Python 参考实现保持 bit-exact（新增 `DetectionPreprocessorTest` 回归锁定）。
+- perf(core): 识别预处理内存融合。逐框 resize 后直接归一化写入 NCHW，去掉每框的 CV_32F 中间 Mat 与 HWC flat 数组，且不再需要同时持有全部框的 HWC 数据才能进入第二阶段。50 框 × 1200px 宽实测堆分配 79.1 MB → 39.8 MB（-50%），耗时 21.1 ms → 15.9 ms（-25%），另省约 40 MB native 内存；数值 bit-exact（新增 `RecognitionPreprocessorTest` 回归锁定）。
+- perf(core): 文档方向预处理同型融合，去掉 CV_32F 中间 Mat 与 HWC flat 数组，改为逐行读 uint8 直写 CHW。
+- fix(core): 修复文档方向预处理的 native 缓冲滞留。中心裁剪子 Mat 视图与 resize 本体原先释放顺序颠倒，现改为「先释放子视图、再释放本体」（OpenCV Mat 引用计数 2 → 1 → 0）。
+- perf(structured): 结构化解析热路径分配优化。火车票解析器 3 处方法体内 `Pattern.compile` 提为类常量；户口本解析器标签片段数组提为类常量（消除逐框每次约 110 个 String 引用分配）；银行卡持卡人姓名反查由 O(n²) 改为 O(n)（预建首个同文本框索引，语义不变）。
+- refactor(core): 删除零调用的死代码 `Offset.toFloat`（逻辑与 `unclip` 内的展开点收尾完全重复）。
 - feat(pdd): 拼多多福袋结构化结果新增类型字段。新增 `PddLuckyBagType` 枚举（`LUCKY_BAG` 福袋券 / `FRUIT` 水果券 / `UNKNOWN`），`PddLuckyBagResult#getType()` 区分「百亿补贴 抽福袋」与「百亿补贴 水果分享券」两类分享图 —— 两类版式一致，按标题 / 口号 / 背景水印文案判定，判不出时为 `UNKNOWN`；`fieldBoxes` 同步回填 "type" 关键框。
 
 ### v1.2.3 - 2026-09-12

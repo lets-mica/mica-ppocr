@@ -196,17 +196,4 @@ public class Offset {
 		}
 		return a * unclipRatio / l;
 	}
-
-	private static float[][] toFloat(Coordinate[] coords) {
-		int n = coords.length;
-		if (n > 1 && coords[0].equals(coords[n - 1])) {
-			n--;
-		}
-		float[][] out = new float[n][2];
-		for (int i = 0; i < n; i++) {
-			out[i][0] = (float) coords[i].x;
-			out[i][1] = (float) coords[i].y;
-		}
-		return out;
-	}
 }

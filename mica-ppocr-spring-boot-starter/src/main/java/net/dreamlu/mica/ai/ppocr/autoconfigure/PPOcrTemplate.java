@@ -53,11 +53,15 @@ import java.util.*;
  *       {@link #driverLicense()} / {@link #businessLicense()} / {@link #invoice()} /
  *       {@link #trainTicket()} / {@link #taxiReceipt()} / {@link #householdRegister()} /
  *       {@link #pddLuckyBag()} ——
- *       获取 10 类内置解析器，每个解析器已绑定 engine，自带 5 种入参的 {@code parse(...)} 重载；</li>
+ *       获取 10 类内置解析器，每个解析器已绑定 engine，自带 10 个 {@code parse(...)} 重载
+ *       （5 种入参 × 带/不带 {@link DbDetParams}）；</li>
  *   <li>{@link #get(Class)} —— 通用查表入口，自定义解析器或不想加 getter 时使用。</li>
  * </ul>
  *
  * <p>内部按 {@code parser.getClass()} 建索引，相同类型重复注册以首次为准（{@link LinkedHashMap} 保序）。
+ * ⚠️ 由此带来的约束：解析器若被 Spring AOP 代理（CGLIB/JDK），运行时类会变成
+ * {@code Xxx$$SpringCGLIB$$0}，此时 {@code get(Xxx.class)} 将抛「未注册解析器」——
+ * 需要按声明类型查找，或改用类型专用的 getter。
  *
  * <p>典型用法（Spring Boot 上传）：
  * <pre>

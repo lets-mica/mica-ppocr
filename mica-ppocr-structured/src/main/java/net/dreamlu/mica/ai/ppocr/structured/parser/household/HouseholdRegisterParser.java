@@ -120,6 +120,36 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		"迁来本址", "何时由何地迁往本址", "何时由何地迁来本址", "迁来本", "迁往本址");
 
 	/**
+	 * 单字中文 label fragment 集合（"无"是合法 value，不在此列）。
+	 *
+	 * <p>提为类常量：{@link #isLabelFragment(String, boolean)} 在逐框热路径上被反复调用，
+	 * 放在方法体内会每次重新分配数组字面量。
+	 */
+	private static final Set<String> SINGLE_CHAR_LABEL_FRAGMENTS = CollUtil.setOf(
+		"姓", "名", "性", "别", "民", "族", "籍", "贯", "份", "职", "业",
+		"浙", "所", "血", "型", "婚", "姻", "状", "况", "兵", "役",
+		"宗", "教", "信", "仰", "曾", "用", "住", "址", "签", "章", "登",
+		"记", "本", "市", "县", "户", "号", "出", "生", "身", "高", "公",
+		"文", "化", "程", "度", "承", "办");
+
+	/**
+	 * 标签 / 字段关键字集合（节选）。
+	 *
+	 * <p>提为类常量，原因同 {@link #SINGLE_CHAR_LABEL_FRAGMENTS}。
+	 */
+	private static final Set<String> LABEL_FRAGMENTS = CollUtil.setOf(
+		"姓", "姓 名", "名", "性别", "性 别", "性", "别", "出生地", "出 生 地",
+		"民族", "民", "族", "籍贯", "籍", "贯", "出生日期", "出 生 日 期", "出生", "出 生",
+		"公民身份", "公民身", "份", "证件编号", "身高", "身 高", "血型", "血 型",
+		"文化程度", "文 化 程 度", "婚姻状况", "婚 姻 状 况", "兵役状况", "兵 役 状 况",
+		"服务处所", "服 务 处 所", "职业", "职", "业", "何时由何地", "迁来本",
+		"迁来本市", "迁来本市(县)", "迁来本市（县）", "何时由何地迁来本",
+		"何时由何地迁来本市", "何时由何地迁来本址", "何时由何地迁往本址",
+		"承办人签章", "承 办 人 签 章", "签章", "登记日期", "登 记 日 期", "登记",
+		"户号", "户 号", "本市", "本市(县)", "本市（县）", "其他住址", "其 他 住 址",
+		"宗教信仰", "宗 教 信 仰", "曾用名", "曾 用 名", "与户主关系");
+
+	/**
 	 * "承办人签章" label fragment 关键字。
 	 */
 	private static final List<String> ISSUER_LABEL_KEYWORDS = CollUtil.listOf("承办人签章", "承 办 人 签 章", "签章", "承办人");
@@ -1354,40 +1384,19 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		if (text == null || text.isEmpty()) return false;
 		// 单字中文 label fragment（"无"是合法 value，不在此列）
 		if (text.length() == 1) {
-			String[] singleChars = {
-				"姓", "名", "性", "别", "民", "族", "籍", "贯", "份", "职", "业",
-				"浙", "所", "血", "型", "婚", "姻", "状", "况", "兵", "役",
-				"宗", "教", "信", "仰", "曾", "用", "住", "址", "签", "章", "登",
-				"记", "本", "市", "县", "户", "号", "出", "生", "身", "高", "公",
-				"文", "化", "程", "度", "承", "办"
-			};
-			for (String s : singleChars) {
-				if (text.equals(s)) {
-					return true;
-				}
-			}
+			return SINGLE_CHAR_LABEL_FRAGMENTS.contains(text);
 		}
 		// 标签或字段关键字（节选）
-		String[] labels = {
-			"姓", "姓 名", "名", "性别", "性 别", "性", "别", "出生地", "出 生 地",
-			"民族", "民", "族", "籍贯", "籍", "贯", "出生日期", "出 生 日 期", "出生", "出 生",
-			"公民身份", "公民身", "份", "证件编号", "身高", "身 高", "血型", "血 型",
-			"文化程度", "文 化 程 度", "婚姻状况", "婚 姻 状 况", "兵役状况", "兵 役 状 况",
-			"服务处所", "服 务 处 所", "职业", "职", "业", "何时由何地", "迁来本",
-			"迁来本市", "迁来本市(县)", "迁来本市（县）", "何时由何地迁来本",
-			"何时由何地迁来本市", "何时由何地迁来本址", "何时由何地迁往本址",
-			"承办人签章", "承 办 人 签 章", "签章", "登记日期", "登 记 日 期", "登记",
-			"户号", "户 号", "本市", "本市(县)", "本市（县）", "其他住址", "其 他 住 址",
-			"宗教信仰", "宗 教 信 仰", "曾用名", "曾 用 名", "与户主关系"
-		};
-		for (String label : labels) {
-			if (text.equals(label)) {
-				return true;
-			}
-			// contains 仅对多字 label 启用，避免单字 label（如"别""业"）误伤
-			// 含该字的合法 value（如"别女""初中毕业"）
-			if (useContainsMulti && label.length() >= 2 && text.contains(label)) {
-				return true;
+		if (LABEL_FRAGMENTS.contains(text)) {
+			return true;
+		}
+		// contains 仅对多字 label 启用，避免单字 label（如"别""业"）误伤
+		// 含该字的合法 value（如"别女""初中毕业"）
+		if (useContainsMulti) {
+			for (String label : LABEL_FRAGMENTS) {
+				if (label.length() >= 2 && text.contains(label)) {
+					return true;
+				}
 			}
 		}
 		return false;

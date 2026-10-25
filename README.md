@@ -22,7 +22,7 @@
 |--------------|-------|--------------------------|
 | JDK          | 8     | java 8 或以上版本             |
 | ONNX Runtime | 1.18.0 | 此版本内置的原生库可兼容更多操作系统版本     |
-| OpenCV       | 4.10.0-0 | 含 Windows/Linux/macOS 原生库 |
+| OpenCV       | 4.9.0-0 | 含 Windows/Linux/macOS 原生库 |
 | JTS          | 1.20.0 | 多边形偏移（pyclipper 等价物）     |
 | PDFBox       | 3.0.8  | PDF 双通道（文本层抽取 + 渲染兜底）  |
 
@@ -115,6 +115,7 @@ issueDate:    2018-02-24
 - `detect(...)` — 仅检测，返回 boxes + scores
 
 > - `Path` 重载兼容非默认文件系统（如 ZIP / JIMFS / 内存 FS）：优先走 native 文件读取，不支持的 FileSystem 自动退回 `Files.readAllBytes`。
+> - `run(byte[])` / `run(Path)` 会嗅探 `%PDF-` 魔数，命中时自动走 PDF 双通道并平铺所有页结果。
 > - 确需复用已加载 `Mat` 的高级场景（如同一图跑多次推理），可使用 `runMat(Mat)` / `detectMat(Mat)` / `recognizeMat(List<Mat>)`（`Mat` 的 release 由调用方负责）。
 
 ### 4.2 完整示例
@@ -129,7 +130,7 @@ public class Demo {
             .recCharDictPath("models/ppocr-v6/tiny/dict.txt")
             .useDocOrientationClassify(true)                                  // 可选：整图方向分类
             .docOrientationModelPath("models/ppocr-v6/doc_ori/doc_ori.onnx")  // 开启后必填
-            .docOrientationThresh(0.3f)                                       // < 此值视为 0°；默认 0.3
+            .docOrientationThresh(0.4f)                                       // < 此值视为 0°；默认 0.4
             .build();
         try (PPOcrV6Engine engine = new PPOcrV6Engine(config)) {
             List<PPOcrV6Result> results = engine.run("test_images/vehicle/vehicle1.png");
@@ -263,6 +264,13 @@ mica:
       # exec-mode: sequential                                 # ONNX 执行模式：sequential / parallel（默认 sequential）
       # enable-cpu-mem-arena: false                           # CPU arena 高水位不归还 OS，动态分辨率下内存持续增长，默认关闭（issue #14）
       # enable-memory-pattern: false                          # 内存模式优化，shape 变化时同样吃内存，默认关闭
+      # ===== PDF 双通道（可选）=====
+      # pdf:
+      #   enabled: true                                       # PDF 通道开关（默认 true）
+      #   render-dpi: 200                                     # 渲染通道 DPI
+      #   min-text-chars: 10                                  # 文本层最少字符数
+      #   min-readable-ratio: 0.6                             # 文本层可读字符占比下限
+      #   force-ocr: false                                    # 强制所有页走渲染 + OCR
 ```
 
 ### 6.2 PPOcrTemplate API
@@ -299,6 +307,10 @@ List<PPOcrV6Result> results = ppocr.run(file.getBytes());
 | `driverLicense()` | `DriverLicenseParser` | `DriverLicenseResult` |
 | `businessLicense()` | `BusinessLicenseParser` | `BusinessLicenseResult` |
 | `invoice()` | `InvoiceParser` | `InvoiceResult` |
+| `trainTicket()` | `TrainTicketParser` | `TrainTicketResult` |
+| `taxiReceipt()` | `TaxiReceiptParser` | `TaxiReceiptResult` |
+| `householdRegister()` | `HouseholdRegisterParser` | `HouseholdRegisterResult` |
+| `pddLuckyBag()` | `PddLuckyBagParser` | `PddLuckyBagResult` |
 
 ```java
 // 链式写法：template 拿解析器 → 解析器跑 parse
@@ -307,7 +319,7 @@ IdCardResult         i = ppocrTemplate.idCard().parse(path);
 DriverLicenseResult  d = ppocrTemplate.driverLicense().parse(inputStream);
 ```
 
-> 这 6 个解析器是 `StructuredParserAutoConfiguration` 里注册的 bean，由 `PPOcrTemplate` 持有引用。
+> 这 10 个解析器是 `StructuredParserAutoConfiguration` 里注册的 bean，由 `PPOcrTemplate` 持有引用。
 > 如果需要替换/包装某个解析器，直接在自己的 `@Configuration` 里覆盖对应 bean 即可（`@ConditionalOnMissingBean` 会让自定义生效），`PPOcrTemplate` 会自动注入你提供的实例。
 > 自定义解析器场景：直接 `new YourParser(engine)` 后调 `parser.parse(...)`，无需经过 `PPOcrTemplate`，详见 §5.3。
 

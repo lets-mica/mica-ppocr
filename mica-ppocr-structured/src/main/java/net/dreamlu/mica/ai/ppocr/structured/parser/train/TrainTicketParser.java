@@ -208,6 +208,22 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 	private static final Set<String> TRAIN_NUMBER_NOISE_KEYWORDS = CollUtil.setOf(
 		"原票", "补", "越站", "事由", "加收");
 
+	/**
+	 * 合并框「身份证+姓名」中身份证部分的匹配模式（允许中间含脱敏星号）。
+	 */
+	private static final Pattern MERGED_ID_PART_PATTERN = Pattern.compile(
+		"\\d{6,17}[\\dXx*]{1,4}\\d*[\\dXx]?");
+
+	/**
+	 * 合并框「身份证+姓名」尾部姓名的匹配模式（2-6 位中文）。
+	 */
+	private static final Pattern MERGED_NAME_PATTERN = Pattern.compile("([\\u4e00-\\u9fa5]{2,6})");
+
+	/**
+	 * 脱敏身份证号（含 *）的匹配模式。
+	 */
+	private static final Pattern MASKED_ID_PATTERN = Pattern.compile("(\\d+[*\\dXx]{0,8}[\\dXx])");
+
 	// ========================================================================
 	// 入口
 	// ========================================================================
@@ -645,10 +661,10 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 		if (text == null || text.isEmpty()) return null;
 		// 身份证部分可能含 *（脱敏）
 		// 模式：17位数字 + 1位数字/X（中间允许 4 个 *）
-		Matcher m = Pattern.compile("\\d{6,17}[\\dXx*]{1,4}\\d*[\\dXx]?").matcher(text);
+		Matcher m = MERGED_ID_PART_PATTERN.matcher(text);
 		if (!m.find()) return null;
 		String after = text.substring(m.end());
-		Matcher nameM = Pattern.compile("([\\u4e00-\\u9fa5]{2,6})").matcher(after);
+		Matcher nameM = MERGED_NAME_PATTERN.matcher(after);
 		if (!nameM.find()) return null;
 		String name = nameM.group(1);
 		// 排除站名/机构名
@@ -725,7 +741,7 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 		//    例如 "2024231998****156X"（10 位 + 4 * + "156X" = 16 字符，剥 * 后 13 位）
 		//    例如 "3101082006****0000"（10 位 + 4 * + 4 位 = 18 字符，剥 * 后 14 位）
 		//    例如 "3101082006****0000X"（同上 + 末位 X = 19 字符）
-		Matcher masked = Pattern.compile("(\\d+[*\\dXx]{0,8}[\\dXx])").matcher(text);
+		Matcher masked = MASKED_ID_PATTERN.matcher(text);
 		while (masked.find()) {
 			String idPart = masked.group();
 			if (!idPart.contains("*")) continue;

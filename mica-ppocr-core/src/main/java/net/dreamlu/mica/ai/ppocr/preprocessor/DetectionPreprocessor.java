@@ -19,7 +19,6 @@ package net.dreamlu.mica.ai.ppocr.preprocessor;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
-import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
 import org.opencv.core.Mat;
 import org.opencv.core.Scalar;
 import org.opencv.core.Size;
@@ -109,6 +108,15 @@ public final class DetectionPreprocessor {
 	/**
 	 * 执行预处理。
 	 *
+	 * <p>内存策略：归一化结果<b>直接写入 CHW 输出数组</b>，不 materialize 中间 HWC 数组，
+	 * 也不生成 CV_32F 中间 Mat。峰值内存 = 1 份 CHW（4 字节/像素/通道）+ 1 行缓冲。
+	 * 旧实现需要 2 份堆数组（hwcFlat + chw）+ 1 份 native CV_32F Mat，
+	 * 4000×3000 图下多占约 288 MiB。
+	 *
+	 * <p>数值等价性：uint8 像素值 0~255 在 float32 中精确可表示，
+	 * 故「uint8 → CV_32F → 运算」与「uint8 → 提升为 float → 运算」逐位相同，
+	 * 与 Python 参考实现保持 bit-exact。
+	 *
 	 * @param imgBgr BGR 图像 (H, W, 3) uint8
 	 * @return 预处理结果
 	 */
@@ -121,8 +129,7 @@ public final class DetectionPreprocessor {
 			int hNew = ro.image.rows();
 			int wNew = ro.image.cols();
 			int c = ro.image.channels();
-			float[] hwcFlat = normalize(ro.image);
-			float[] chw = NdArrayUtils.hwcFlatToNchw(hwcFlat, hNew, wNew, c);
+			float[] chw = normalizeToChw(ro.image, hNew, wNew, c);
 
 			float[] shape = new float[]{
 				srcH, srcW,
@@ -137,25 +144,9 @@ public final class DetectionPreprocessor {
 	}
 
 	private ResizeOutcome resizeImage(Mat img, int h, int w) {
-		int limit = limitSideLen;
-		double ratio;
-		if ("max".equals(limitType)) {
-			ratio = Math.max(h, w) > limit ? (double) limit / Math.max(h, w) : 1.0;
-		} else {
-			ratio = Math.min(h, w) < limit ? (double) limit / Math.min(h, w) : 1.0;
-		}
-
-		int rh = (int) (h * ratio);
-		int rw = (int) (w * ratio);
-
-		if (Math.max(rh, rw) > maxSideLimit) {
-			ratio = (double) maxSideLimit / Math.max(rh, rw);
-			rh = (int) (rh * ratio);
-			rw = (int) (rw * ratio);
-		}
-
-		rh = Math.max(Math.round((float) rh / STRIDE) * STRIDE, STRIDE);
-		rw = Math.max(Math.round((float) rw / STRIDE) * STRIDE, STRIDE);
+		int[] hw = computeResizedHW(h, w, limitSideLen, limitType, maxSideLimit);
+		int rh = hw[0];
+		int rw = hw[1];
 
 		if (rh == h && rw == w) {
 			return new ResizeOutcome(img, 1.0, 1.0);
@@ -171,36 +162,83 @@ public final class DetectionPreprocessor {
 	}
 
 	/**
-	 * 归一化：(img * (1/255) - mean) / std，返回 HWC flat float[]。
+	 * 归一化并直接写出 CHW flat float[]。
+	 *
+	 * <p>归一化公式：{@code (img * (1/255) - mean) / std}，按通道索引取 mean/std
+	 * （B → MEAN[0] / STD[0]，G → [1]，R → [2]，与旧实现一致）。
 	 *
 	 * <p>注意：Core.multiply/subtract/divide(Mat, Scalar, Mat) 对多通道 Mat
-	 * 处理有 bug（G/R 通道会变成 +Inf），所以这里先转 float32 Mat，
-	 * 再用 Java 端循环做归一化。
+	 * 处理有 bug（G/R 通道会变成 +Inf），所以归一化在 Java 端完成。
+	 *
+	 * <p>逐行读取要求 Mat 连续（否则 {@code Mat.get(row, 0, byte[])} 会跨行读错），
+	 * 非连续时先 clone。
 	 *
 	 * @param img BGR uint8 Mat
-	 * @return 归一化后的 HWC flat float[]，长度 = H * W * 3
+	 * @param h   图像高
+	 * @param w   图像宽
+	 * @param c   通道数
+	 * @return 归一化后的 CHW flat float[]，长度 = C * H * W
 	 */
-	private float[] normalize(Mat img) {
-		Mat f = NdArrayUtils.toFloat32(img);
-		float[] hwc;
+	private float[] normalizeToChw(Mat img, int h, int w, int c) {
+		int hw = h * w;
+		float[] chw = new float[c * hw];
+		Mat src = img.isContinuous() ? img : img.clone();
 		try {
-			hwc = NdArrayUtils.matToFlatHwc(f);
+			byte[] rowBuf = new byte[w * c];
+			if (c == 3) {
+				normalizeToChwBgr(src, chw, h, w, hw, rowBuf);
+			} else {
+				normalizeToChwGeneric(src, chw, h, w, c, hw, rowBuf);
+			}
 		} finally {
-			f.release();
+			if (src != img) {
+				src.release();
+			}
 		}
-		int n = hwc.length;
-		int c = 3;
-		int hw = n / c;
+		return chw;
+	}
+
+	/**
+	 * 3 通道（BGR）快速路径：mean/std 按通道索引固定取 B/G/R 三档。
+	 */
+	private void normalizeToChwBgr(Mat src, float[] chw, int h, int w, int hw, byte[] rowBuf) {
 		float scale = SCALE;
 		float meanB = (float) MEAN.val[0], meanG = (float) MEAN.val[1], meanR = (float) MEAN.val[2];
 		float stdB = (float) STD.val[0], stdG = (float) STD.val[1], stdR = (float) STD.val[2];
-		for (int i = 0; i < hw; i++) {
-			int b = i * c;
-			hwc[b] = (hwc[b] * scale - meanB) / stdB;
-			hwc[b + 1] = (hwc[b + 1] * scale - meanG) / stdG;
-			hwc[b + 2] = (hwc[b + 2] * scale - meanR) / stdR;
+		for (int r = 0; r < h; r++) {
+			src.get(r, 0, rowBuf);
+			int rowBase = r * w;
+			for (int col = 0; col < w; col++) {
+				int i = rowBase + col;
+				int b = col * 3;
+				chw[i] = ((rowBuf[b] & 0xFF) * scale - meanB) / stdB;
+				chw[hw + i] = ((rowBuf[b + 1] & 0xFF) * scale - meanG) / stdG;
+				chw[2 * hw + i] = ((rowBuf[b + 2] & 0xFF) * scale - meanR) / stdR;
+			}
 		}
-		return hwc;
+	}
+
+	/**
+	 * 非 3 通道通用路径：按通道索引取 mean/std（超出范围时取最后一档）。
+	 *
+	 * <p>det 输入在当前代码路径上恒为 3 通道（imread / imdecode IMREAD_COLOR /
+	 * BufferedImageUtils.toBgrMat 均产出 CV_8UC3），此分支仅为完整性保留。
+	 */
+	private void normalizeToChwGeneric(Mat src, float[] chw, int h, int w, int c, int hw, byte[] rowBuf) {
+		float scale = SCALE;
+		for (int r = 0; r < h; r++) {
+			src.get(r, 0, rowBuf);
+			int rowBase = r * w;
+			for (int col = 0; col < w; col++) {
+				int i = rowBase + col;
+				int b = col * c;
+				for (int ch = 0; ch < c; ch++) {
+					float mean = ch < MEAN.val.length ? (float) MEAN.val[ch] : (float) MEAN.val[MEAN.val.length - 1];
+					float std = ch < STD.val.length ? (float) STD.val[ch] : (float) STD.val[STD.val.length - 1];
+					chw[ch * hw + i] = ((rowBuf[b + ch] & 0xFF) * scale - mean) / std;
+				}
+			}
+		}
 	}
 
 	/**

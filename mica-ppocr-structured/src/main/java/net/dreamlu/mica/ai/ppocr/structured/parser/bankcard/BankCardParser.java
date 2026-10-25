@@ -24,7 +24,9 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -141,6 +143,17 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		}
 		final int bottomY = (int) (imgMaxY * 0.5);
 
+		// 预先建立「文本 → 首次出现框的 minY」索引：
+		// 旧实现是在谓词内部对每个候选文本再全表扫一遍找同文本框（O(n²)），
+		// 这里一次遍历建表，语义保持一致（仍取「首个同文本框」）。
+		final Map<String, Integer> firstMinY = new HashMap<>(results.size() * 2);
+		for (PPOcrV6Result r : results) {
+			String t = r.text();
+			if (t != null && !firstMinY.containsKey(t)) {
+				firstMinY.put(t, LabelMatcher.minY(r));
+			}
+		}
+
 		String hit = LabelMatcher.matchPattern(results, text -> {
 			if (!HOLDER_NAME_PATTERN.matcher(text).matches()) {
 				return false;
@@ -150,12 +163,8 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 				return false;
 			}
 			// 找到该文本对应的框，过滤掉顶部银行英文简称
-			for (PPOcrV6Result r : results) {
-				if (r.text().equals(text)) {
-					return LabelMatcher.minY(r) >= bottomY;
-				}
-			}
-			return true;
+			Integer minY = firstMinY.get(text);
+			return minY == null || minY >= bottomY;
 		}, false);
 		if (hit != null) {
 			return hit.replace(".", ". ").replace("  ", " ").trim();

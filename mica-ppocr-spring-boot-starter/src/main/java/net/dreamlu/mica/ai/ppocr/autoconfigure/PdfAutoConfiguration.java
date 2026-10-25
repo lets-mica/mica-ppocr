@@ -27,9 +27,11 @@ import org.springframework.context.annotation.Configuration;
  * PDF OCR 通道配置自动配置。
  *
  * <p>把 {@code mica.ai.ppocr.pdf.*} 绑定为 {@link PdfOcrConfig} Bean，
- * 业务方可在自定义服务里通过 {@code @Autowired} 注入，
- * 然后通过 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine#run(byte[])}
- * 自动嗅探 PDF 并应用该配置。
+ * 业务方可在自定义服务里通过 {@code @Autowired} 注入。
+ *
+ * <p>⚠️ <b>已知限制</b>：{@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口
+ * 目前硬编码 {@code PdfOcrConfig.defaults()}，<b>尚未消费这个 Bean</b> ——
+ * 注入后自行读取 {@link PdfOcrConfig} 的各字段，不会改变引擎的运行行为。
  *
  * <p>启用条件：{@code mica.ai.ppocr.pdf.enabled=true}（默认）。
  */

@@ -37,7 +37,6 @@ import java.io.File;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -56,11 +55,13 @@ import java.util.concurrent.ConcurrentHashMap;
  *       {@link #driverLicense()} / {@link #businessLicense()} / {@link #invoice()} /
  *       {@link #trainTicket()} / {@link #taxiReceipt()} / {@link #householdRegister()} /
  *       {@link #pddLuckyBag()} ——
- *       获取 10 类内置解析器，每个解析器已绑定 engine，自带 5 种入参的 {@code parse(...)} 重载；</li>
+ *       获取 10 类内置解析器，每个解析器已绑定 engine，自带 10 个 {@code parse(...)} 重载
+ *       （5 种入参 × 带/不带 {@link DbDetParams}）；</li>
  *   <li>{@link #get(Class)} —— 通用查表入口，自定义解析器或不想加 getter 时使用。</li>
  * </ul>
  *
- * <p>内部按 {@code parser.getClass()} 建索引，相同类型重复注册以首次为准（{@link LinkedHashMap} 保序）。
+ * <p>解析器采用<b>懒加载</b>：按<b>声明类型</b>从 {@link AppContext} 取 bean，
+ * 不在构造期建立「运行时类 → 实例」索引。
  *
  * <p>典型用法（Solon 上传）：
  * <pre>

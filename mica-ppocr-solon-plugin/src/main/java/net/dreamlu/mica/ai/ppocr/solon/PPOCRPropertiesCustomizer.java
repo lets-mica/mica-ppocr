@@ -21,7 +21,7 @@ import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 /**
  * PP-OCR 配置自定义器。
  *
- * <p>在 {@link PPOCRAutoConfiguration} 构建 {@link PPOcrV6Config} 之前按 Spring 容器顺序依次调用，
+ * <p>在 {@link PPOCRAutoConfiguration} 构建 {@link PPOcrV6Config} 时依次调用，
  * 允许业务方对配置进行旁路覆盖（例如从环境变量 / Nacos / 自定义路径解析规则动态设置模型路径）。
  *
  * <p>使用示例：
@@ -40,7 +40,13 @@ import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
  * }
  * </pre>
  *
- * <p>实现按 Spring 容器顺序生效；多个 customizer 时建议使用 {@code @Order} 显式控制。
+ * <p>⚠️ <b>排序说明</b>：Solon 4.x <b>没有</b> {@code org.noear.solon.annotation.Order} 注解
+ * （那是 Spring 的），多个 customizer 时的生效顺序由容器注入 {@code List} 的顺序决定，
+ * 当前<b>不保证</b>可排序。若需要确定顺序，请自行合并为单个 customizer。
+ *
+ * <p>⚠️ <b>执行顺序说明</b>：自动配置是「先校验必填项 → 再应用 customizer」，
+ * 因此 {@code det-model-path} / {@code rec-model-path} / {@code rec-char-dict-path}
+ * 必须先在 yml 里填上可读的占位值，否则启动时就在校验阶段失败，customizer 不会执行。
  */
 @FunctionalInterface
 public interface PPOCRPropertiesCustomizer {

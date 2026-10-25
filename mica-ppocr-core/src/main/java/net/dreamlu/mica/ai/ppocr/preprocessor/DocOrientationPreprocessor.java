@@ -18,7 +18,6 @@ package net.dreamlu.mica.ai.ppocr.preprocessor;
 
 import lombok.ToString;
 import lombok.experimental.Accessors;
-import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -110,15 +109,17 @@ public final class DocOrientationPreprocessor {
 		// resizeShort 会返回「新建 Mat」或「原图」：两种 case 的内存归属不同
 		Mat resized = resizeShort(imgBgr);
 		boolean ownsResized = (resized != imgBgr);
+		// cropped 是 resized 的子 Mat 视图（共享底层数据，OpenCV Mat 走引用计数）：
+		// 视图本身也持有一份引用，必须 release，否则 resized 的 native 缓冲
+		// 会一直挂到 GC 才回收。
 		Mat cropped = centerCrop(resized, cropSize);
-		// cropped 是 resized 的子 Mat 视图（共享底层内存），所以谁是 cropped 的 owner
-		// 取决于 resized 的 owner：ownsResized=true → cropped 是新增的 owner 链
-		// 正常人简化为：cropped 永远不要手动 release（也无需手动 release）
 		try {
 			float[] normalized = normalizeAndToChw(cropped);
 			// 注意：BGR 输入但按 RGB 顺序应用 mean/std（与官方 PP-LCNet 训练时一致）
 			return new Result(normalized, new int[]{1, CHANNELS, cropSize, cropSize}, srcH, srcW);
 		} finally {
+			// 先释放子视图、再释放本体：引用计数 2 → 1 → 0，数据在本体释放时才真正回收
+			cropped.release();
 			if (ownsResized) {
 				resized.release();
 			}
@@ -169,33 +170,46 @@ public final class DocOrientationPreprocessor {
 
 	/**
 	 * 归一化 + HWC → CHW：输出 flat float[]，顺序为 C·H·W（C=3 通道）。
+	 *
+	 * <p>内存策略：直接逐行读 uint8 并写出 CHW，不 materialize 中间 HWC 数组，
+	 * 也不生成 CV_32F 中间 Mat。
+	 *
+	 * <p>数值等价性：uint8 像素值 0~255 在 float32 中精确可表示，
+	 * 故「uint8 → CV_32F → 运算」与「uint8 → 提升为 float → 运算」逐位相同。
+	 *
+	 * <p>逐行读取要求 Mat 连续（否则 {@code Mat.get(row, 0, byte[])} 会跨行读错），
+	 * 非连续时先 clone。cropped 是从更大图上切出的子视图，通常非连续。
 	 */
 	private float[] normalizeAndToChw(Mat img) {
-		Mat f = NdArrayUtils.toFloat32(img);
-		float[] hwc;
-		try {
-			hwc = NdArrayUtils.matToFlatHwc(f);
-		} finally {
-			f.release();
-		}
 		int h = img.rows();
 		int w = img.cols();
 		int hw = h * w;
 		int c = CHANNELS;
 		float[] chw = new float[c * hw];
-		// 注意：BGR → 通道排列为 B/G/R，但 mean/std 仍按 R/G/B 顺序应用
-		// 这是 PaddleX 官方预处理脚本的标准做法（保持 bit-exact 兼容）
-		// 详见：https://github.com/PaddlePaddle/PaddleX/issues/4966
-		for (int i = 0; i < hw; i++) {
-			int b = i * c;
-			float bgr0 = hwc[b];      // B
-			float bgr1 = hwc[b + 1];  // G
-			float bgr2 = hwc[b + 2];  // R
-			// 按 RGB 顺序应用 mean/std
-			// chw[0]=R, chw[1]=G, chw[2]=B
-			chw[hw * 0 + i] = (bgr2 * SCALE - MEAN[0]) / STD[0];  // R
-			chw[hw * 1 + i] = (bgr1 * SCALE - MEAN[1]) / STD[1];  // G
-			chw[hw * 2 + i] = (bgr0 * SCALE - MEAN[2]) / STD[2];  // B
+		Mat m = img.isContinuous() ? img : img.clone();
+		try {
+			byte[] rowBuf = new byte[w * c];
+			for (int r = 0; r < h; r++) {
+				m.get(r, 0, rowBuf);
+				int rowBase = r * w;
+				for (int col = 0; col < w; col++) {
+					int i = rowBase + col;
+					int b = col * c;
+					float bgr0 = rowBuf[b] & 0xFF;      // B
+					float bgr1 = rowBuf[b + 1] & 0xFF;  // G
+					float bgr2 = rowBuf[b + 2] & 0xFF;  // R
+					// 注意：BGR → 通道排列为 B/G/R，但 mean/std 仍按 R/G/B 顺序应用
+					// 这是 PaddleX 官方预处理脚本的标准做法（保持 bit-exact 兼容）
+					// 详见：https://github.com/PaddlePaddle/PaddleX/issues/4966
+					chw[hw * 0 + i] = (bgr2 * SCALE - MEAN[0]) / STD[0];  // R
+					chw[hw * 1 + i] = (bgr1 * SCALE - MEAN[1]) / STD[1];  // G
+					chw[hw * 2 + i] = (bgr0 * SCALE - MEAN[2]) / STD[2];  // B
+				}
+			}
+		} finally {
+			if (m != img) {
+				m.release();
+			}
 		}
 		return chw;
 	}

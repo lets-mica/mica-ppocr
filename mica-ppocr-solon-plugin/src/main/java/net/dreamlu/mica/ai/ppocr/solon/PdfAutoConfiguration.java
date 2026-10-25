@@ -26,9 +26,14 @@ import org.noear.solon.annotation.Configuration;
  *
  * <p>启用条件：{@code mica.ai.ppocr.pdf.enabled=true}（默认）。
  *
- * <p>业务方可在自定义服务里通过 {@code @Inject} 注入 {@link PdfOcrConfig}，
- * 然后通过 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine#run(byte[])}
- * 自动嗅探 PDF 并应用该配置。
+ * <p>业务方可在自定义服务里通过 {@code @Inject} 注入 {@link PdfOcrConfig}。
+ *
+ * <p>⚠️ <b>已知限制</b>：{@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口
+ * 目前硬编码 {@code PdfOcrConfig.defaults()}，<b>尚未消费这个 Bean</b> ——
+ * 注入后自行读取 {@link PdfOcrConfig} 的各字段，不会改变引擎的运行行为。
+ *
+ * <p>另注：本类目前<b>未被</b> {@link net.dreamlu.mica.ai.ppocr.solon.integration.PpocrPlugin}
+ * 注册，Solon 端实际上拿不到 {@link PdfOcrConfig} bean。
  */
 @Configuration
 @Condition(onExpression = "${mica.ai.ppocr.pdf.enabled:true} == true")

@@ -42,29 +42,44 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       ├── engine/PPOcrV6Engine.java     ← run/runMat 等入口（自动嗅探 PDF）
 │       ├── engine/PPOcrV6Result.java
 │       ├── config/PPOcrV6Config.java
-│       ├── preprocessor/DetectionPreprocessor.java, RecognitionPreprocessor.java
-│       ├── postprocessor/DbDetParams.java, DbPostProcessor.java, CtcLabelDecoder.java
+│       ├── preprocessor/{DetectionPreprocessor, RecognitionPreprocessor, DocOrientationPreprocessor}.java
+│       ├── postprocessor/{DbDetParams, DbPostProcessor, CtcLabelDecoder, DocOrientationPostprocessor}.java
 │       ├── pdf/                          ← PDF 双通道（与 engine 同模块）
 │       │   ├── PdfOcrConfig.java         ← renderDpi / minTextChars / minReadableRatio / forceOcr
 │       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分）
 │       │   ├── PdfTextQuality.java       ← 文本层质量评分（字符数 + 可读占比）
 │       │   └── PdfPageResult.java        ← per-page 结果（pageIndex + viaOcr）
-│       └── utils/{BoxUtil, BufferedImageUtils, CropUtil, Offset, NdArrayUtils, OrtProviders, PdfMagicDetector}.java
+│       └── utils/{BoxUtil, BufferedImageUtils, CollUtil, CropUtil, ModelResourceLoader,
+│                   NdArrayUtils, Offset, OrtProviders, PdfMagicDetector}.java
 ├── mica-ppocr-structured/      ← 结构化解析模块：把 OCR 散落文字框组织成业务字段
-│   └── src/main/java/net/dreamlu/mica/ai/ppocr/structured/
-│       ├── BaseStructuredParser.java    ← SPI 接口 (parseResults)
-│       ├── LabelMatcher.java            ← 标签定位 + 位置匹配 + 正则兜底公共骨架
-│       └── parser/
-│           └── vehicle/                 ← 行驶证解析器（首个实现）
-│               ├── VehicleLicenseParser.java
-│               └── VehicleLicenseResult.java
+│   └── src/main/java/net/dreamlu/mica/ai/ppocr/structured/parser/
+│       ├── core/                          ← SPI + 公共骨架
+│       │   ├── BaseStructuredParser.java   ← SPI 抽象基类（parseResults + 10 个 parse 重载）
+│       │   ├── BaseStructuredResult.java   ← 结果基类（rawResults + fieldBoxes）
+│       │   └── LabelMatcher.java           ← 标签定位 + 位置匹配 + 正则兜底公共骨架
+│       ├── vehicle/     ← 行驶证          ├── idcard/      ← 身份证
+│       ├── bankcard/    ← 银行卡          ├── driver/      ← 机动车驾驶证
+│       ├── business/    ← 营业执照        ├── invoice/     ← 发票（Invoice 分发 + Electronic / Vat）
+│       ├── train/       ← 火车票          ├── taxi/        ← 出租车票
+│       └── household/   ← 户口本          └── pdd/         ← 拼多多福袋
 ├── mica-ppocr-solon-plugin/    ← Solon 自动配置
+│   └── src/main/java/net/dreamlu/mica/ai/ppocr/solon/
+│       ├── integration/PpocrPlugin.java   ← 插件入口（显式 beanMake 各自动配置类）
+│       ├── PPOCRAutoConfiguration.java
+│       ├── PPOCRProperties.java
+│       ├── PPOCRPropertiesCustomizer.java
+│       ├── PdfAutoConfiguration.java
+│       ├── StructuredParserAutoConfiguration.java
+│       ├── PPOcrTemplate.java
+│       └── OpenCVNativeLoader.java
 └── mica-ppocr-spring-boot-starter/  ← Spring Boot 自动配置
     └── src/main/java/net/dreamlu/mica/ai/ppocr/autoconfigure/
         ├── PPOCRAutoConfiguration.java
         ├── PPOCRProperties.java
-        ├── PdfAutoConfiguration.java    ← 把 mica.ai.ppocr.pdf.* 绑定为 PdfOcrConfig
-        ├── PPOcrTemplate.java           ← 解析器模板（不含 PDF 反射门面）
+        ├── PPOCRPropertiesCustomizer.java
+        ├── PdfAutoConfiguration.java      ← 把 mica.ai.ppocr.pdf.* 绑定为 PdfOcrConfig
+        ├── StructuredParserAutoConfiguration.java  ← 注册 10 个内置解析器 + PPOcrTemplate
+        ├── PPOcrTemplate.java             ← 解析器模板（10 个 getter + run 重载）
         └── OpenCVNativeLoader.java
 ```
 
@@ -74,34 +89,47 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 mvn -DskipTests package      # 全量构建
 mvn package                  # 构建 + 运行测试
 mvn test                     # 运行所有测试
-mvn test -Dtest=NpUtilTest   # 运行单个测试
+mvn test -Dtest=CtcLabelDecoderTest   # 运行单个测试
+mvn package -Dmaven.compiler.release=8 # 按 Java 8 ct.sym 校验标准库调用（CI 用的就是这条）
 ```
+
+> 最后一条很关键：默认构建走 `-source/-target 1.8`，javac 不会按 Java 8 的标准库签名校验，
+> **Java 9+ API 残留能编译通过但运行时 `NoSuchMethodError`**。加了 `-Dmaven.compiler.release=8`
+> 才会在编译期拦下（CI 的 `test-and-build.yml` 就是这么做的，JDK 25 下必须传 `8` 而不是 `1.8`）。
 
 Native libs (OpenCV, ONNX Runtime) are pulled by Maven for Windows/Linux/macOS — no manual install.
 
-## Model setup (required before running)
+## Model setup
 
-Models are **not** in the repo. Place under `models/ppocr-v6/{tier}/`，三档可选：
+模型**已随仓库入库**（`models/ppocr-v6/`），clone 后无需额外下载即可运行：
 
 ```
 models/ppocr-v6/
-├── tiny/        # 轻量，速度快，精度一般 (det 1.7MB + rec 4.3MB)
+├── tiny/        # 轻量，速度快，精度一般 (det 1.7 MiB + rec 4.3 MiB)
 │   ├── det.onnx
 │   ├── rec.onnx
 │   └── dict.txt             # ~2855 字符
-├── small/       # 平衡档 (det 9.4MB + rec 20.2MB)
+├── small/       # 平衡档 (det 9.4 MiB + rec 20.2 MiB)
 │   ├── det.onnx
 │   ├── rec.onnx
 │   └── dict.txt             # ~2855 字符
-└── medium/      # 高精度档 (det 59.2MB + rec 73.0MB)
-    ├── det.onnx
-    ├── rec.onnx
-    └── dict.txt             # ~7180 字符
+├── medium/      # 高精度档 (det.onnx.zip 32 MiB + rec.onnx.zip 65 MiB)
+│   ├── det.onnx.zip        # 解压后 ~59 MiB
+│   ├── rec.onnx.zip        # 解压后 ~73 MiB
+│   └── dict.txt             # ~7180 字符
+└── doc_ori/     # 可选：文档方向分类模型 (6.5 MiB)
+    └── doc_ori.onnx
 ```
+
+> `medium` 档以 `.onnx.zip` 形式入库（`.gitignore` 里 `*.zip` 被 `!models/ppocr-v6/medium/*.zip` 反选），
+> **需解压为 `det.onnx` / `rec.onnx` 后使用**；`tiny` / `small` / `doc_ori` 已是可直接使用的 `.onnx`。
 
 CLI 默认使用 `--tier tiny`；可用 `--tier small|medium` 切换，或用 `--det-model`/`--rec-model`/`--dict` 显式指定覆盖。
 
 模型来源：`E:\codes\ai\mica-ai\model-tools\ppocr\model\out-by-spec`
+
+> ⚠️ 模型体积较大（`models/` 合计约 140 MiB，`.git` 约 324 MiB）。若需瘦身仓库，
+> 应把 `models/` 移出 git 跟踪并改为构建期下载 / CI 制品分发，而不是让每个 clone 都拉全量模型。
 
 **dict.txt 格式约定（勿破坏）**：
 
@@ -117,6 +145,12 @@ CLI 默认使用 `--tier tiny`；可用 `--tier small|medium` 切换，或用 `-
 `mica-ppocr-structured` 涉及 **身份证 / 银行卡 / 驾驶证 / 行驶证 / 营业执照 / 户口本 / 发票** 等高敏单据，
 任何 `src/test/**` 测试数据、示例图、golden JSON、用例 fixture **必须在入库前做隐私脱敏处理**，否则禁止提交。
 Agent 在生成、补全或 review 测试用例时，必须主动按以下规则处理：
+
+> ⚠️ **当前仓库待整改（2026-10-25 审计发现，尚未修复）**：
+> `test_images/**`（53 个文件）与 `mica-ppocr-structured/src/test/resources/ocr-json/**`（21 个文件）
+> 仍是**未脱敏的真实证件**：含完整身份证号、银行卡号、车牌 / VIN、真实姓名与人脸照片，
+> 且已推送到公开的 GitHub / Gitee / GitCode 仓库。整改前请勿再新增同类数据；
+> 整改方案（是否重写 git 历史）待定，详见下方「误处理流程」。
 
 ### 1. 禁止入库的原始数据
 
@@ -172,12 +206,12 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 ### mica-ppocr-core
 
 - **`engine/PPOcrV6Engine`** — the orchestrator and only public entry point. Owns the two
-  `OrtSession`s (det + rec), is `Closeable` (use try-with-resources), and exposes `detect()`,
-  `recognize()`, and the full `run(Mat)`. Accepts a `PPOcrV6Config` (Lombok `@Builder`).
+  `OrtSession`s (det + rec)，is `Closeable` (use try-with-resources)，exposes `run(...)` / `detect(...)` /
+  `recognizeMat(...)`（Mat 版见下）。Accepts a `PPOcrV6Config` (Lombok `@Builder`).
   `run(byte[])` / `run(Path)` 自动嗅探 `%PDF-` 魔数：命中时按 PDF 双通道处理并平铺所有页结果；
-  非 PDF 走图片通道。`run(byte[])` / `run(InputStream)` / `parse(byte[])` / `parse(InputStream)`
-  均不声明 `throws IOException`——PDF 解析或流读取失败时引擎内部包为 `UncheckedIOException`
-  抛出，调用方免 try-catch。
+  非 PDF 走图片通道。`run(byte[])` / `run(InputStream)` 均不声明 `throws IOException`
+  ——PDF 解析或流读取失败时引擎内部包为 `UncheckedIOException` 抛出，调用方免 try-catch。
+  （`parse(...)` 一站式结构化方法在 `mica-ppocr-structured` 的 `BaseStructuredParser` 上，引擎本身没有 `parse`。）
 
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
 
@@ -205,12 +239,20 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - `CropUtil` — perspective-warp crop; returns `null` for invalid crops;
     `run()` filters these `null`s out — preserve this null-skip contract.
 
-  - `OrtProviders` — picks the ORT execution provider; `forceCpu` (negation of
-    `preferAccelerator`) is the default.
+  - `OrtProviders` — picks the ORT execution provider；`PPOcrV6Config.preferAccelerator`
+    默认 `false`（即强制 CPU，保证跨平台 bit-exact），置 `true` 时按
+    CoreML (macOS) > CUDA > CPU 顺序探测。
 
 ### mica-ppocr-structured
 
-- **`BaseStructuredParser<R>`** — `@FunctionalInterface` SPI 接口，规范所有解析器的入口签名 `parseResults(List<PPOcrV6Result>) → R`。
+- **`BaseStructuredParser<R>`** — SPI **抽象类**（v1.1.3 起由接口改为抽象类），规范所有解析器的入口签名
+  `parseResults(List<PPOcrV6Result>) → R`。基类同时提供 10 个 `final` 的 `parse(...)` 一站式重载
+  （`String` / `File` / `Path` / `byte[]` / `InputStream` × 带/不带 `DbDetParams`），内部完成 OCR 推理后再调 `parseResults`。
+
+- **`BaseStructuredResult`** — 结果基类，统一持有 `rawResults`（完整 OCR 原始框）与 `fieldBoxes`（字段 → 坐标列表）。
+  ⚠️ `fieldBoxes` 目前**并非所有解析器都回填**：`invoice`（Vat + Electronic）/ `business` / `vehicle` /
+  `household` / `pdd` / `train` / `taxi` 会回填；`idcard` / `driver` / `bankcard` 三个解析器
+  仍走丢弃 box 的文本版 `LabelMatcher.matchValue(...)`，`fieldBoxes` 为空 map。
 
 - **`BaseStructuredParser.detParams()`** — 解析器声明默认 DB 检测参数的钩子（默认 `null` = 引擎默认）。
   `parse(...)` 一站式方法会带上它；显式传入的 `DbDetParams` 优先，`null` 时回落到本钩子。
@@ -218,7 +260,8 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 - **`LabelMatcher`** — 公共骨架（`@UtilityClass`）：
 
-  - `matchValue` 标签定位 + 位置匹配；
+  - `matchValue` / `matchValueWithBox` 标签定位 + 位置匹配（`WithBox` 版返回 `LabeledMatch(value, box)`，
+    供解析器回填 `fieldBoxes`）；
 
   - `findLabelBox` 支持 OCR 残缺标签模糊匹配；
 
@@ -228,25 +271,44 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
   - 几何工具 `minX/maxX/minY/maxY`。
 
-- **10 个内置解析器**：`bankcard` / `business` / `driver` / `household` / `idcard` /
-  `invoice`（含 `Electronic` / `Vat` 与通用 `Invoice` / `UpperMoneyConverter`）/ `pdd` /
-  `taxi` / `train` / `vehicle`。每个继承 `BaseStructuredParser<R>`，实现 `parseResults(...)`。
-  Spring Boot / Solon 通过 `PPOcrTemplate.xxx()` getter 获取已绑定 engine 的实例。
+- **10 个内置解析器**（容器注册的 bean）：`bankcard` / `business` / `driver` / `household` / `idcard` /
+  `invoice` / `pdd` / `taxi` / `train` / `vehicle`。
+  其中 `InvoiceParser` 是**发票分发器**（按版式分派到 `ElectronicInvoiceParser` / `VatInvoiceParser`，
+  二者**不继承** `BaseStructuredParser`，只提供 `parseResults(...)` 静态入口）；
+  其余 9 个直接继承 `BaseStructuredParser<R>`。
+  Spring Boot / Solon 通过 `PPOcrTemplate.xxx()` getter（10 个）获取已绑定 engine 的解析器实例。
   调用方也可直接 `new XxxParser(engine).parse(bytes)` 一站式调用。
 
 ### mica-ppocr-spring-boot-starter
 
 - **`PPOCRAutoConfiguration`** — auto-wires `PPOcrV6Engine` bean when `mica.ai.ppocr.enabled=true`.
 
-- **`PPOCRProperties`** — `@ConfigurationProperties("mica.ai.ppocr")` binding.
+- **`PPOCRProperties`** — `@ConfigurationProperties("mica.ai.ppocr")` binding，
+  实现 `PPOcrV6Config.Source` 接口后由 `PPOcrV6Config.from(properties)` 一行转换。
 
-- **`StructuredParserAutoConfiguration`** — 注册 6 个内置解析器与 `PPOcrTemplate`：
+- **`PPOCRPropertiesCustomizer`** — 配置旁路覆盖钩子（按环境切 `tiny`/`small`/`medium` 等）。
+
+- **`StructuredParserAutoConfiguration`** — 注册 10 个内置解析器与 `PPOcrTemplate`：
 
   - 每个解析器通过 `new XxxParser(PPOcrV6Engine)` 绑定 engine；
 
   - `PPOcrTemplate` 通过 `vehicleLicense()` / `idCard()` 等 getter 获取已绑定 engine 的解析器实例。
 
+- **`PdfAutoConfiguration`** — 把 `mica.ai.ppocr.pdf.*` 绑定为 `PdfOcrConfig` bean。
+  ⚠️ 当前 `PPOcrV6Engine` 的 PDF 入口硬编码 `PdfOcrConfig.defaults()`，**尚未消费这个 bean**，
+  故 `pdf.*` 配置当前对运行行为不生效（详见 README §6.1 的提示）。
+
 - **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
+
+### mica-ppocr-solon-plugin
+
+与 Spring Boot Starter **能力对齐、类名一一对应**（`net.dreamlu.mica.ai.ppocr.solon.*`），
+差异只在框架注解：Solon 用 `@BindProps` + `@Condition`，Spring 用 `@ConfigurationProperties` +
+`@ConditionalOnProperty` / `@ConditionalOnMissingBean`。
+
+- **`PpocrPlugin`**（`integration/` 包）— 插件入口，**显式 `beanMake` 各自动配置类**。
+  ⚠️ 当前只注册 `PPOCRProperties` / `OpenCVNativeLoader` / `PPOCRAutoConfiguration` /
+  `StructuredParserAutoConfiguration`，**独缺 `PdfAutoConfiguration`** —— Solon 端拿不到 `PdfOcrConfig` bean。
 
 ### Porting conventions
 
@@ -284,16 +346,50 @@ DB 会把多个大数字与水印连成一个整体轮廓，框内真正笔画�
 
 **别做**：调大 `DbDetParams.minSize` 过滤碎片（会连小字标签一起丢，如行驶证「所有人」变 null）。
 
+### 性能优化的红线：改内存 / 耗时，不改数值
+
+预处理是 bit-exact 的高危区。三处预处理（det / rec / doc_ori）已做过**内存融合**：
+归一化结果直接写入 CHW / NCHW 输出数组，不再 materialize 中间 HWC 数组，也不再生成
+CV_32F 中间 Mat。实测收益：
+
+| 场景 | 堆分配 | 耗时 |
+| --- | --- | --- |
+| det 预处理（3000×4000 图） | 275 MB → 137 MB（-50%） | 110 ms → 42 ms（2.6×） |
+| rec 预处理（50 框 × 1200px 宽） | 79.1 MB → 39.8 MB（-50%） | 21.1 ms → 15.9 ms（-25%） |
+
+**改预处理数值前必须知道的三件事**：
+
+1. **uint8 → CV_32F 与 uint8 → 提升为 float 逐位相同**（0~255 在 float32 精确可表示）。
+   所以「先转 float 再算」与「直接提升再算」结果一致 —— 这是省掉 CV_32F 中间 Mat 的依据。
+2. **OpenCV Mat 视图走引用计数**：父 Mat `release()` 后子视图仍可读 ⇒ 释放顺序必须是
+   「先子视图、后本体」。写反了不会立刻报错，只是 native 缓冲滞留到 GC。
+3. **`Mat.get(row, 0, byte[])` 逐行读 == 整块读**（多通道亦然），但**要求 Mat 连续**；
+   窄 ROI（行 stride > 宽度×elemSize）是非连续，必须先 `clone()`。
+   注意 `Mat.get(row, col, double[])` **不支持 CV_8UC3**，CV_8UC3 用 `byte[]`。
+
+**回归护栏（不要删！）**：`DetectionPreprocessorTest` / `RecognitionPreprocessorTest` /
+`DocOrientationPreprocessorTest` 里各有一个 `reference*` 方法，是**旧实现**的副本，
+充当「数值真相源」，用 `assertArrayEquals` 与新实现逐位比对。
+它们看起来像重复代码，但**不是死代码** —— 删掉参考实现等于删掉 bit-exact 护栏，
+后续任何数值改动都会静默漂移。新增优化时按同样模式：旧算法留在测试里当参照。
+
 ### 运行时依赖基线（已校验 Java 8 字节码）
 
-| 依赖                       | 版本                                                        | 最低 Java |
-| ------------------------ | --------------------------------------------------------- | ------- |
-| onnxruntime              | 1.18.0                                                    | Java 8  |
-| opencv (openpnp)         | 4.9.0-0                                                   | Java 8  |
-| jts-core                 | 1.20.0                                                    | Java 8  |
-| slf4j-api                | 2.0.18                                                    | Java 8  |
-| slf4j-simple             | 2.0.18（**test scope only** —— 替代原 logback-classic 1.3.15） | Java 8  |
-| lombok                   | 1.18.46                                                   | Java 8  |
-| spring-boot-dependencies | 2.7.18（替代原 3.5.16，3.x 是 Java 17）                          | Java 8  |
-| mica-auto                | 2.3.5（替代原 4.0.1，3.x/4.x 是 Java 17）                        | Java 8  |
-| solon                    | 4.0.6（**保留** — 实测所有 class 文件 max major = 52）              | Java 8  |
+版本以根 `pom.xml` 的 `<properties>` 为准；下表「字节码」列为本轮用
+`javap -v` 实测的 class 文件 major version（**52 = Java 8**）。
+
+| 依赖                       | 版本                                                        | 字节码 | 最低 Java |
+| ------------------------ | --------------------------------------------------------- | --- | ------- |
+| onnxruntime              | 1.18.0                                                    | 52 | Java 8  |
+| opencv (openpnp)         | 4.9.0-0                                                   | 52 | Java 8  |
+| jts-core                 | 1.20.0                                                    | 52 | Java 8  |
+| pdfbox                   | 3.0.8（PDF 双通道依赖，随 core 传递；下游不需要可 exclude）          | 52 | Java 8  |
+| slf4j-api                | 2.0.20                                                    | 52 | Java 8  |
+| slf4j-simple             | 2.0.20（**test scope only** —— 替代原 logback-classic 1.3.15） | 52 | Java 8  |
+| lombok                   | 1.18.48                                                   | 52 | Java 8  |
+| spring-boot-dependencies | 2.7.18（替代原 3.5.16，3.x 是 Java 17）                          | 52 | Java 8  |
+| mica-auto                | 2.3.5（替代原 4.0.1，3.x/4.x 是 Java 17）                        | 52 | Java 8  |
+| solon                    | 4.1.1（**保留** — 实测所有 class 文件 max major = 52）              | 52 | Java 8  |
+
+> 升级任何依赖后，**必须重跑一次字节码校验**（`javap -v -cp <jar> <类>` 看 major version）。
+> 版本号漂移会让本表「已校验 Java 8」的结论失效。

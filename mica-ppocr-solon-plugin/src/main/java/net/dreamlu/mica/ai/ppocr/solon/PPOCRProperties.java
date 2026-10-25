@@ -33,8 +33,17 @@ import org.noear.solon.annotation.Configuration;
 public class PPOCRProperties implements PPOcrV6Config.Source {
 
 	/**
-	 * 是否启用该 Starter。默认 true：启用时必填的 det/rec 模型路径及字典缺失将启动失败；
-	 * 设为 false 时整个 Starter 不注入任何 Bean。
+	 * 是否启用该 Starter。默认 true：启用时必填的 det/rec 模型路径及字典缺失将启动失败。
+	 *
+	 * <p>设为 false 时的行为<b>两端不一致</b>：
+	 * <ul>
+	 *   <li>Solon 插件：正确跳过全部 Bean 装配。</li>
+	 *   <li>Spring Boot Starter：<b>存在已知缺陷</b> —— {@code StructuredParserAutoConfiguration}
+	 *       未挂 {@code enabled} 闸门，10 个解析器 Bean 仍会被注册，但拿不到
+	 *       {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine}，导致容器 refresh 失败
+	 *       （{@code NoSuchBeanDefinitionException}）。规避方式：把 {@code mica-ppocr-structured}
+	 *       一并移出 classpath。</li>
+	 * </ul>
 	 */
 	private boolean enabled = true;
 
@@ -88,7 +97,11 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	private float detUnclipRatio = 1.5f;
 
 	/**
-	 * 识别输入 shape [C, H, W]
+	 * 识别输入 shape [C, H, W]。
+	 *
+	 * <p>⚠️ 引擎当前只取 {@code H} 段（{@code recImageShape[1]}）；{@code W} 段不参与推理，
+	 * 识别宽度的分桶上下限（320 ~ 3200）写死在 {@code PPOcrV6Engine} 构造处。
+	 * 改 {@code W} 不影响运行行为。
 	 */
 	private int[] recImageShape = {3, 48, 320};
 
@@ -167,7 +180,12 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	private boolean enableMemoryPattern = false;
 
 	/**
-	 * PDF 通道配置（仅当 classpath 含 mica-ppocr-pdf 时生效）。
+	 * PDF 通道配置（PDF 能力随 {@code mica-ppocr-core} 内置的 PDFBox 通道提供，
+	 * 原独立的 {@code mica-ppocr-pdf} 模块已并入 core）。
+	 *
+	 * <p>⚠️ <b>已知限制</b>：{@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口
+	 * 目前硬编码 {@code PdfOcrConfig.defaults()}（renderDpi=200 / minTextChars=20 /
+	 * minReadableRatio=0.90 / forceOcr=false），<b>并未消费本子配置</b> —— 此处改值不影响运行行为。
 	 *
 	 * <p>对应 yml：
 	 * <pre>
