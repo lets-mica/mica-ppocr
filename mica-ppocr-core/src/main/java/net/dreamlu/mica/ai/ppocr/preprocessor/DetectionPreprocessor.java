@@ -243,24 +243,29 @@ public final class DetectionPreprocessor {
 
 	/**
 	 * det 预处理结果。
-	 *
-	 * @param data     NCHW flat float[] 数据
-	 * @param shape    [N, C, H, W]
-	 * @param imgShape [srcH, srcW, ratioH, ratioW]
 	 */
 	@lombok.Value
 	@Accessors(fluent = true)
 	public static class Result {
-		private final float[] data;
-		private final int[] shape;
-		private final float[] imgShape;
+		/**
+		 * NCHW flat float[] 数据
+		 */
+		float[] data;
+		/**
+		 * [N, C, H, W]
+		 */
+		int[] shape;
+		/**
+		 * [srcH, srcW, ratioH, ratioW]
+		 */
+		float[] imgShape;
 	}
 
 	@lombok.Value
 	@Accessors(fluent = true)
 	private static class ResizeOutcome {
-		private final Mat image;
-		private final double ratioH;
-		private final double ratioW;
+		Mat image;
+		double ratioH;
+		double ratioW;
 	}
 }
