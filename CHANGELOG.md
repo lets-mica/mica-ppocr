@@ -10,6 +10,7 @@
 - perf(core): 三处预处理（det / rec / doc_ori）内存融合 —— 归一化结果直接写入 CHW / NCHW，去掉 HWC flat 中间数组与 CV_32F 中间 Mat，峰值堆内存减半。det（3000×4000 图）275 MB → 137 MB、110 ms → 42 ms（2.6×）；rec（50 框 × 1200px 宽）79.1 MB → 39.8 MB、21.1 ms → 15.9 ms，另省约 40 MB native 内存。uint8 → CV_32F 与 uint8 → 提升为 float 在 0~255 上逐位相同，数值与 Python 参考实现保持 bit-exact，由三个新增预处理测试回归锁定。
 - fix(core): 修复文档方向预处理的 native 缓冲滞留 —— 中心裁剪子 Mat 视图与 resize 本体原先释放顺序颠倒，现改为「先视图、后本体」（引用计数 2 → 1 → 0）。
 - fix(core): 识别 / 文档方向预处理显式校验输入为 8bit 3 通道 Mat —— 归一化按「每像素 3 字节」逐行读，而 `Mat.get(row, 0, byte[])` 是从 (row, 0) 起连续读满数组长度：通道数 &lt; 3 会**跨行读**（把相邻行数据当本行像素），&gt; 3 会**通道步长错位**，两种情况都不抛异常、会**静默产出错误的归一化张量**。旧实现越界即抛 `ArrayIndexOutOfBoundsException`，故障模式由「响亮崩溃」退化为「静默错误」，现改为显式抛 `IllegalArgumentException`。
+- fix(test): 修复 `MemoryLeakReproTest` 误报 —— 判据参考点由 round 5 改为 `max(round 5, round 10)`，并移除 `stabilizeJvmMemory()` 的早退守卫。round 5 紧跟强制 GC，是堆刚被 uncommit 的人为凹点，后续正常回升被算成「增长」；实测误报样本 round 20 仍比 baseline **低 26.8 MB**，却因以 round 5 为参考被判为 +87 MB 泄漏。触发条件是 surefire `forkCount=0` 下全量套件与单独跑的基线状态不一致（堆已被前序测试撑到 1 GB → 稳定化被跳过），修正后两种场景同构。
 - perf(structured): 结构化解析热路径分配优化 —— 火车票解析器 3 处 `Pattern.compile` 提为类常量；户口本解析器标签片段数组提为类常量（消除逐框每次约 110 个 String 引用分配）；银行卡持卡人反查 O(n²) → O(n)（语义不变）。
 - refactor(core): 清理零调用死代码 —— `Offset.toFloat`，以及 PDF 通道三个无 `detParams` 的私有重载。
 - feat(pdd): 拼多多福袋结构化结果新增类型字段 —— 新增 `PddLuckyBagType` 枚举（`LUCKY_BAG` / `FRUIT` / `UNKNOWN`），`getType()` 区分「百亿补贴 抽福袋」与「百亿补贴 水果分享券」两类分享图（按标题 / 口号 / 背景水印文案判定）；`fieldBoxes` 同步回填 "type" 关键框。
