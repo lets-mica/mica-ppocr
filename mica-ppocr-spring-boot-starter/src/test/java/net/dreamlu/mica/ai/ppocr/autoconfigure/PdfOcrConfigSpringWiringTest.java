@@ -120,14 +120,43 @@ class PdfOcrConfigSpringWiringTest {
 			)
 			.run(context -> {
 				assertThat(context).hasNotFailed();
-				// enabled=false 时不注册 PdfOcrConfig bean
-				assertThat(context).doesNotHaveBean(PdfOcrConfig.class);
+				// enabled=false 时 Bean 仍存在，但取默认值
+				assertThat(context).hasSingleBean(PdfOcrConfig.class);
+				assertThat(context.getBean(PdfOcrConfig.class).getRenderDpi())
+					.isEqualTo(PdfOcrConfig.defaults().getRenderDpi());
 
 				PPOcrV6Engine engine = context.getBean(PPOcrV6Engine.class);
 				assertThat(engine.getPdfOcrConfig().getRenderDpi())
 					.isEqualTo(PdfOcrConfig.defaults().getRenderDpi());
 				assertThat(engine.getPdfOcrConfig().getMinTextChars())
 					.isEqualTo(PdfOcrConfig.defaults().getMinTextChars());
+				engine.close();
+			});
+	}
+
+	@Test
+	void userDefinedBeanReachesEngine() {
+		Path modelDir = tinyModelDir();
+		Assumptions.assumeTrue(modelDir != null, "tiny 模型缺失，跳过集成测试");
+
+		runner
+			.withPropertyValues(
+				"mica.ai.ppocr.det-model-path=" + modelDir.resolve("det.onnx"),
+				"mica.ai.ppocr.rec-model-path=" + modelDir.resolve("rec.onnx"),
+				"mica.ai.ppocr.rec-char-dict-path=" + modelDir.resolve("dict.txt")
+			)
+			.withBean(PdfOcrConfig.class, () -> PdfOcrConfig.builder()
+				.renderDpi(999)
+				.minTextChars(77)
+				.forceOcr(true)
+				.build())
+			.run(context -> {
+				assertThat(context).hasNotFailed();
+				// 业务方自定义的 Bean 必须真正改变引擎行为（而不是被静默忽略）
+				PPOcrV6Engine engine = context.getBean(PPOcrV6Engine.class);
+				assertThat(engine.getPdfOcrConfig().getRenderDpi()).isEqualTo(999);
+				assertThat(engine.getPdfOcrConfig().getMinTextChars()).isEqualTo(77);
+				assertThat(engine.getPdfOcrConfig().isForceOcr()).isTrue();
 				engine.close();
 			});
 	}

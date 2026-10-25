@@ -18,8 +18,10 @@ public class PpocrPlugin implements Plugin {
 	public void start(AppContext context) throws Throwable {
 		context.beanMake(PPOCRProperties.class);
 		context.beanMake(OpenCVNativeLoader.class);
-		context.beanMake(PPOCRAutoConfiguration.class);
+		// PdfAutoConfiguration 先于 PPOCRAutoConfiguration 注册：
+		// 后者需要注入 PdfOcrConfig Bean，定义先存在才能被解析
 		context.beanMake(PdfAutoConfiguration.class);
+		context.beanMake(PPOCRAutoConfiguration.class);
 		context.beanMake(StructuredParserAutoConfiguration.class);
 	}
 }

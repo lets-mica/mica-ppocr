@@ -294,11 +294,12 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
   - `PPOcrTemplate` 通过 `vehicleLicense()` / `idCard()` 等 getter 获取已绑定 engine 的解析器实例。
 
-- **`PdfAutoConfiguration`** — 把 `mica.ai.ppocr.pdf.*` 绑定为 `PdfOcrConfig` bean，
-  供业务方直接注入读取。**同一份配置同时被引擎消费**：
-  `PPOCRProperties.getPdfOcrConfig()` → `PPOcrV6Config.pdfOcrConfig` → `PPOcrV6Engine`，
-  由引擎的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）实际使用。
-  `pdf.enabled=false` 时引擎回落到 `PdfOcrConfig.defaults()`。
+- **`PdfAutoConfiguration`** — 把 `mica.ai.ppocr.pdf.*` 绑定为 `PdfOcrConfig` bean。
+  ⚠️ 该 bean **就是引擎使用的配置**（不是只读副本）：`PdfAutoConfiguration.pdfOcrConfig` →
+  `PPOCRAutoConfiguration.ppocrV6Config` 注入 → `PPOcrV6Config.pdfOcrConfig` →
+  `PPOcrV6Engine`，由引擎的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）实际使用。
+  业务方自定义同名 bean（`@ConditionalOnMissingBean` 让自动配置退让）会**直接改变引擎行为**。
+  `pdf.enabled=false` 时 bean 仍存在，但取 `PdfOcrConfig.defaults()`（忽略 yml 的 pdf 参数）。
 
 - **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
 
@@ -365,9 +366,15 @@ CV_32F 中间 Mat。实测收益：
    所以「先转 float 再算」与「直接提升再算」结果一致 —— 这是省掉 CV_32F 中间 Mat 的依据。
 2. **OpenCV Mat 视图走引用计数**：父 Mat `release()` 后子视图仍可读 ⇒ 释放顺序必须是
    「先子视图、后本体」。写反了不会立刻报错，只是 native 缓冲滞留到 GC。
-3. **`Mat.get(row, 0, byte[])` 逐行读 == 整块读**（多通道亦然），但**要求 Mat 连续**；
-   窄 ROI（行 stride > 宽度×elemSize）是非连续，必须先 `clone()`。
-   注意 `Mat.get(row, col, double[])` **不支持 CV_8UC3**，CV_8UC3 用 `byte[]`。
+3. **`Mat.get(row, 0, byte[])` 不是「读一行」，而是「从 (row, 0) 起连续读满 `data.length` 字节」**。
+   这条语义有三个坑：
+   - **行缓冲比一行长**（通道数 &lt; 预期，如 1 通道按 3 通道定长）→ **跨行读**，把相邻行数据当本行像素；
+   - **行缓冲比一行短**（通道数 &gt; 预期）→ 通道步长错位，首个像素对、后续全错；
+   - 两种情况**都不抛异常**，会**静默产出错误数据**。
+   ⇒ 行缓冲长度必须**严格等于** `cols() * channels()`，并在入口校验 `type()`。
+   另：非连续 Mat（窄 ROI，行 stride &gt; 宽度×elemSize）读取会跨行，必须先 `clone()`；
+   `Mat.get(row, col, double[])` **不支持 CV_8UC3**（type 16），CV_8UC3 用 `byte[]`；
+   非 CV_8U 的 Mat 用 `byte[]` 读会抛 `UnsupportedOperationException`。
 
 **回归护栏（不要删！）**：`DetectionPreprocessorTest` / `RecognitionPreprocessorTest` /
 `DocOrientationPreprocessorTest` 里各有一个 `reference*` 方法，是**旧实现**的副本，

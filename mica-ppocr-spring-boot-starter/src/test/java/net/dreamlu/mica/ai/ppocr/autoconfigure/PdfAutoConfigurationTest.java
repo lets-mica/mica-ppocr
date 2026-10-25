@@ -30,13 +30,53 @@ class PdfAutoConfigurationTest {
 
 	@Test
 	void pdfDisabledByProperty() {
-		// mica.ai.ppocr.pdf.enabled=false 时 PDF bean 不应被创建
+		// mica.ai.ppocr.pdf.enabled=false 时：Bean 仍存在，但取 PdfOcrConfig.defaults()（忽略 yml 的 pdf 参数）
 		new ApplicationContextRunner()
 			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
 			.withPropertyValues("mica.ai.ppocr.pdf.enabled=false")
 			.run(context -> {
 				assertThat(context).hasNotFailed();
-				assertThat(context).doesNotHaveBean(PdfOcrConfig.class);
+				assertThat(context).hasSingleBean(PdfOcrConfig.class);
+				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
+				assertThat(cfg.getRenderDpi()).isEqualTo(PdfOcrConfig.defaults().getRenderDpi());
+				assertThat(cfg.getMinTextChars()).isEqualTo(PdfOcrConfig.defaults().getMinTextChars());
+				assertThat(cfg.getMinReadableRatio()).isEqualTo(PdfOcrConfig.defaults().getMinReadableRatio());
+				assertThat(cfg.isForceOcr()).isEqualTo(PdfOcrConfig.defaults().isForceOcr());
+			});
+	}
+
+	@Test
+	void pdfDisabledIgnoresYmlPdfValues() {
+		// enabled=false 时，yml 里写了 pdf 参数也应被忽略
+		new ApplicationContextRunner()
+			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
+			.withPropertyValues(
+				"mica.ai.ppocr.pdf.enabled=false",
+				"mica.ai.ppocr.pdf.render-dpi=300",
+				"mica.ai.ppocr.pdf.min-text-chars=50"
+			)
+			.run(context -> {
+				assertThat(context).hasNotFailed();
+				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
+				assertThat(cfg.getRenderDpi()).isEqualTo(200);
+				assertThat(cfg.getMinTextChars()).isEqualTo(20);
+			});
+	}
+
+	@Test
+	void userDefinedPdfOcrConfigBeanWins() {
+		// 业务方自定义 PdfOcrConfig Bean 时，自动配置退让，容器里就是自定义值
+		new ApplicationContextRunner()
+			.withConfiguration(AutoConfigurations.of(PdfAutoConfiguration.class))
+			.withBean(PdfOcrConfig.class, () -> PdfOcrConfig.builder()
+				.renderDpi(999)
+				.minTextChars(77)
+				.build())
+			.run(context -> {
+				assertThat(context).hasNotFailed();
+				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
+				assertThat(cfg.getRenderDpi()).isEqualTo(999);
+				assertThat(cfg.getMinTextChars()).isEqualTo(77);
 			});
 	}
 

@@ -278,6 +278,9 @@ mica:
 > 影响**文本层可用性判定**与**渲染通道 DPI**；图片通道不受影响。
 > `pdf.enabled=false` 时引擎一律使用默认值（200 / 20 / 0.90 / false）。
 > 两端默认值与 `PdfOcrConfig.defaults()` 保持一致 —— 不配置即保持原有行为。
+>
+> 也可以用代码覆盖：自定义一个 `PdfOcrConfig` Bean 即可（Spring `@Bean` / Solon `@Configuration`），
+> **引擎会直接采用它**，无需再改 yml。
 
 ### 6.2 PPOcrTemplate API
 

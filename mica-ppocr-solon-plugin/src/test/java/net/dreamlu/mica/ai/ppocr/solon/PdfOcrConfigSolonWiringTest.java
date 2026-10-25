@@ -108,9 +108,57 @@ class PdfOcrConfigSolonWiringTest {
 		app.cfg().put("mica.ai.ppocr.pdf.render-dpi", "300");
 		app.start(null);
 
+		// enabled=false 时 Bean 仍存在，但取默认值
+		PdfOcrConfig bean = app.context().getBean(PdfOcrConfig.class);
+		assertEquals(PdfOcrConfig.defaults().getRenderDpi(), bean.getRenderDpi());
+
 		PPOcrV6Engine engine = app.context().getBean(PPOcrV6Engine.class);
 		assertEquals(PdfOcrConfig.defaults().getRenderDpi(), engine.getPdfOcrConfig().getRenderDpi());
 		assertEquals(PdfOcrConfig.defaults().getMinTextChars(), engine.getPdfOcrConfig().getMinTextChars());
+		engine.close();
+	}
+
+	@Test
+	void userDefinedBeanReachesEngine() throws Throwable {
+		Path modelDir = tinyModelDir();
+		Assumptions.assumeTrue(modelDir != null, "tiny 模型缺失，跳过集成测试");
+
+		SimpleSolonApp app = new SimpleSolonApp(PdfOcrConfigSolonWiringTest.class);
+		app.cfg().put("mica.ai.ppocr.det-model-path", modelDir.resolve("det.onnx").toString());
+		app.cfg().put("mica.ai.ppocr.rec-model-path", modelDir.resolve("rec.onnx").toString());
+		app.cfg().put("mica.ai.ppocr.rec-char-dict-path", modelDir.resolve("dict.txt").toString());
+		// 业务方自定义 PdfOcrConfig Bean：必须真正改变引擎行为（而不是被静默忽略）
+		app.context().wrapAndPut(PdfOcrConfig.class, PdfOcrConfig.builder()
+			.renderDpi(999)
+			.minTextChars(77)
+			.forceOcr(true)
+			.build());
+		app.start(null);
+
+		PPOcrV6Engine engine = app.context().getBean(PPOcrV6Engine.class);
+		assertEquals(999, engine.getPdfOcrConfig().getRenderDpi());
+		assertEquals(77, engine.getPdfOcrConfig().getMinTextChars());
+		assertTrue(engine.getPdfOcrConfig().isForceOcr());
+		engine.close();
+	}
+
+	@Test
+	void pdfAutoConfigurationExcludedFallsBackToYmlValues() throws Throwable {
+		Path modelDir = tinyModelDir();
+		Assumptions.assumeTrue(modelDir != null, "tiny 模型缺失，跳过集成测试");
+
+		SimpleSolonApp app = new SimpleSolonApp(PdfOcrConfigSolonWiringTest.class);
+		app.cfg().put("mica.ai.ppocr.det-model-path", modelDir.resolve("det.onnx").toString());
+		app.cfg().put("mica.ai.ppocr.rec-model-path", modelDir.resolve("rec.onnx").toString());
+		app.cfg().put("mica.ai.ppocr.rec-char-dict-path", modelDir.resolve("dict.txt").toString());
+		app.cfg().put("mica.ai.ppocr.pdf.render-dpi", "321");
+		// 用户排除了 PdfAutoConfiguration → 容器里没有 PdfOcrConfig Bean，
+		// 引擎必须回落 yml 派生值而不是启动失败
+		app.context().beanExclude(PdfAutoConfiguration.class);
+		app.start(null);
+
+		PPOcrV6Engine engine = app.context().getBean(PPOcrV6Engine.class);
+		assertEquals(321, engine.getPdfOcrConfig().getRenderDpi());
 		engine.close();
 	}
 

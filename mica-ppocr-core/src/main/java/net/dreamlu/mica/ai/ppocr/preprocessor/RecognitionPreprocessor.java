@@ -19,6 +19,7 @@ package net.dreamlu.mica.ai.ppocr.preprocessor;
 import lombok.ToString;
 import lombok.experimental.Accessors;
 import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -105,11 +106,12 @@ public final class RecognitionPreprocessor {
 			return new Result(new float[0], new int[]{0, CHANNELS, h, 0});
 		}
 
-		// 第一轮：仅计算每图的目标宽度（纯算术，不触碰像素），确定 batch 内 padding 宽度
+		// 第一轮：校验输入 + 计算每图目标宽度（不触碰像素），确定 batch 内 padding 宽度
 		int[] actualWs = new int[n];
 		int maxW = 0;
 		for (int i = 0; i < n; i++) {
 			Mat img = imgs.get(i);
+			requireBgrU8(img, i);
 			int srcH = img.rows();
 			int srcW = img.cols();
 			double whRatio = Math.max((double) wMin / h, (double) srcW / srcH);
@@ -144,6 +146,33 @@ public final class RecognitionPreprocessor {
 		}
 
 		return new Result(data, new int[]{n, CHANNELS, h, maxW});
+	}
+
+	/**
+	 * 校验输入是 8bit 3 通道（CV_8UC3）Mat。
+	 *
+	 * <p>归一化按「每像素 3 字节」逐行读取（{@code Mat.get(row, 0, byte[])}）。
+	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"：
+	 * <ul>
+	 *   <li>通道数 &lt; 3：行缓冲比一行长 → <b>跨行读</b>，把相邻行数据当本行像素</li>
+	 *   <li>通道数 &gt; 3：行缓冲比一行短 → 通道步长错位，首个像素对、后续全错</li>
+	 * </ul>
+	 * 两种情况都不会抛异常，会<b>静默产出错误的归一化张量</b>。
+	 * 旧实现（{@code matToFlatHwc} + 硬编码 3 通道下标）在这两种输入下越界即抛
+	 * {@link ArrayIndexOutOfBoundsException}，故障模式由「响亮崩溃」退化为「静默错误」。
+	 * 故此处显式校验，让失败可观测。
+	 *
+	 * @param img   输入 Mat
+	 * @param index 在入参列表中的下标（用于错误信息定位）
+	 * @throws IllegalArgumentException 输入不是 CV_8UC3
+	 */
+	private static void requireBgrU8(Mat img, int index) {
+		if (img.type() != CvType.CV_8UC3) {
+			throw new IllegalArgumentException(
+				"imgs[" + index + "] 必须是 8bit 3 通道 Mat（CV_8UC3），实际 "
+					+ CvType.typeToString(img.type())
+					+ "（channels=" + img.channels() + "）");
+		}
 	}
 
 	/**
@@ -187,14 +216,17 @@ public final class RecognitionPreprocessor {
 
 	/**
 	 * rec 预处理结果。
-	 *
-	 * @param data  NCHW flat float[] 数据
-	 * @param shape [N, C, H, W]
 	 */
 	@lombok.Value
 	@Accessors(fluent = true)
 	public static class Result {
-		private final float[] data;
-		private final int[] shape;
+		/**
+		 * NCHW flat float[] 数据
+		 */
+		float[] data;
+		/**
+		 * [N, C, H, W]
+		 */
+		int[] shape;
 	}
 }

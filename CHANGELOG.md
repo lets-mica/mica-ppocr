@@ -2,18 +2,17 @@
 
 ## 发行版本
 
-### 未发布
-- feat(core): 接通 `PdfOcrConfig` —— `mica.ai.ppocr.pdf.*` 不再是死配置。`PPOcrV6Config` 新增 `pdfOcrConfig` 字段，`PPOcrV6Engine` 的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）改为消费该配置而非硬编码 `PdfOcrConfig.defaults()`，影响**文本层可用性判定**与**渲染通道 DPI**；新增 `PPOcrV6Engine#getPdfOcrConfig()` 便于观测生效值。`PdfOcrConfig` 新增 `Source` 契约与 `from(Source)` 工厂（与 `PPOcrV6Config.Source` 同构），两端 `PPOCRProperties.Pdf` 实现该契约，转换逻辑只有一处。
-- fix(core): 对齐 `mica.ai.ppocr.pdf.*` 的两端默认值与 `PdfOcrConfig.defaults()` —— 原 properties 默认为 `minTextChars=10 / minReadableRatio=0.6`，引擎实际用的是 `20 / 0.90`。现已统一为 `20 / 0.90`，**不配置即保持原有运行行为**。
-- feat(starter): 新增 `mica.ai.ppocr.pdf.enabled` 属性并明确语义 —— `false` 时引擎一律使用 `PdfOcrConfig.defaults()`（忽略 yml 中的 pdf 参数），而非仅"不注册 bean"。
-- fix(solon): `PpocrPlugin` 补注册 `PdfAutoConfiguration` —— Solon 端此前拿不到 `PdfOcrConfig` bean。
-- perf(core): 检测预处理内存融合。归一化结果直接写入 CHW 输出数组，去掉 HWC flat 中间数组与 CV_32F 中间 Mat，峰值堆内存从 2 份降到 1 份。3000×4000 图实测堆分配 275 MB → 137 MB（-50%），耗时 110 ms → 42 ms（2.6×）；uint8 → CV_32F 与 uint8 → 提升为 float 在 0~255 上逐位相同，数值与 Python 参考实现保持 bit-exact（新增 `DetectionPreprocessorTest` 回归锁定）。
-- perf(core): 识别预处理内存融合。逐框 resize 后直接归一化写入 NCHW，去掉每框的 CV_32F 中间 Mat 与 HWC flat 数组，且不再需要同时持有全部框的 HWC 数据才能进入第二阶段。50 框 × 1200px 宽实测堆分配 79.1 MB → 39.8 MB（-50%），耗时 21.1 ms → 15.9 ms（-25%），另省约 40 MB native 内存；数值 bit-exact（新增 `RecognitionPreprocessorTest` 回归锁定）。
-- perf(core): 文档方向预处理同型融合，去掉 CV_32F 中间 Mat 与 HWC flat 数组，改为逐行读 uint8 直写 CHW。
-- fix(core): 修复文档方向预处理的 native 缓冲滞留。中心裁剪子 Mat 视图与 resize 本体原先释放顺序颠倒，现改为「先释放子视图、再释放本体」（OpenCV Mat 引用计数 2 → 1 → 0）。
-- perf(structured): 结构化解析热路径分配优化。火车票解析器 3 处方法体内 `Pattern.compile` 提为类常量；户口本解析器标签片段数组提为类常量（消除逐框每次约 110 个 String 引用分配）；银行卡持卡人姓名反查由 O(n²) 改为 O(n)（预建首个同文本框索引，语义不变）。
-- refactor(core): 删除零调用的死代码 `Offset.toFloat`（逻辑与 `unclip` 内的展开点收尾完全重复）。
-- feat(pdd): 拼多多福袋结构化结果新增类型字段。新增 `PddLuckyBagType` 枚举（`LUCKY_BAG` 福袋券 / `FRUIT` 水果券 / `UNKNOWN`），`PddLuckyBagResult#getType()` 区分「百亿补贴 抽福袋」与「百亿补贴 水果分享券」两类分享图 —— 两类版式一致，按标题 / 口号 / 背景水印文案判定，判不出时为 `UNKNOWN`；`fieldBoxes` 同步回填 "type" 关键框。
+### v1.2.4 - 2026-10-25
+- feat(core): 接通 `PdfOcrConfig` —— `mica.ai.ppocr.pdf.*` 不再是死配置。`PPOcrV6Config` 新增 `pdfOcrConfig`，`PPOcrV6Engine` 的 PDF 入口改为消费它（原先硬编码 `PdfOcrConfig.defaults()`），影响**文本层可用性判定**与**渲染通道 DPI**；新增 `getPdfOcrConfig()` 便于观测生效值。
+- feat(starter): PDF 通道配置两端对齐 —— 新增 `mica.ai.ppocr.pdf.enabled`（`false` 时引擎用默认值）；**校正两端默认值**（`minTextChars` 10→20、`minReadableRatio` 0.6→0.90，与引擎原有实际行为一致），不配置即保持原行为；Solon 端补注册 `PdfAutoConfiguration`（此前拿不到 `PdfOcrConfig` bean）。
+- fix(starter): `PdfOcrConfig` Bean 现在**就是引擎使用的配置**，不再是只读副本 —— 业务方自定义同名 Bean 会直接改变引擎行为，此前会被静默忽略（容器里是自定义值、引擎仍用 yml/默认值）。⚠️ 行为变更：`pdf.enabled=false` 时 Bean 仍然存在（取默认值），此前是不注册 Bean；两端均容忍该 Bean 缺失（回落到 yml 派生值），不会因排除自动配置类而启动失败。
+- feat(parser): 支持按版面类型声明专属 DB 检测参数。`BaseStructuredParser` 新增 `detParams()` 钩子（默认 `null` = 引擎默认），一站式 `parse(...)` 自动带上，显式传入优先；已落地在 `PddLuckyBagParser.DET_PARAMS`（海报类大字号稀疏数字放宽 `boxThresh`、收紧 `unclipRatio`）。
+- perf(core): 三处预处理（det / rec / doc_ori）内存融合 —— 归一化结果直接写入 CHW / NCHW，去掉 HWC flat 中间数组与 CV_32F 中间 Mat，峰值堆内存减半。det（3000×4000 图）275 MB → 137 MB、110 ms → 42 ms（2.6×）；rec（50 框 × 1200px 宽）79.1 MB → 39.8 MB、21.1 ms → 15.9 ms，另省约 40 MB native 内存。uint8 → CV_32F 与 uint8 → 提升为 float 在 0~255 上逐位相同，数值与 Python 参考实现保持 bit-exact，由三个新增预处理测试回归锁定。
+- fix(core): 修复文档方向预处理的 native 缓冲滞留 —— 中心裁剪子 Mat 视图与 resize 本体原先释放顺序颠倒，现改为「先视图、后本体」（引用计数 2 → 1 → 0）。
+- fix(core): 识别 / 文档方向预处理显式校验输入为 8bit 3 通道 Mat —— 归一化按「每像素 3 字节」逐行读，而 `Mat.get(row, 0, byte[])` 是从 (row, 0) 起连续读满数组长度：通道数 &lt; 3 会**跨行读**（把相邻行数据当本行像素），&gt; 3 会**通道步长错位**，两种情况都不抛异常、会**静默产出错误的归一化张量**。旧实现越界即抛 `ArrayIndexOutOfBoundsException`，故障模式由「响亮崩溃」退化为「静默错误」，现改为显式抛 `IllegalArgumentException`。
+- perf(structured): 结构化解析热路径分配优化 —— 火车票解析器 3 处 `Pattern.compile` 提为类常量；户口本解析器标签片段数组提为类常量（消除逐框每次约 110 个 String 引用分配）；银行卡持卡人反查 O(n²) → O(n)（语义不变）。
+- refactor(core): 清理零调用死代码 —— `Offset.toFloat`，以及 PDF 通道三个无 `detParams` 的私有重载。
+- feat(pdd): 拼多多福袋结构化结果新增类型字段 —— 新增 `PddLuckyBagType` 枚举（`LUCKY_BAG` / `FRUIT` / `UNKNOWN`），`getType()` 区分「百亿补贴 抽福袋」与「百亿补贴 水果分享券」两类分享图（按标题 / 口号 / 背景水印文案判定）；`fieldBoxes` 同步回填 "type" 关键框。
 
 ### v1.2.3 - 2026-09-12
 - feat(ppocr): run 系列方法全面支持按调用覆盖 DB 参数。`run` / `runMat` 新增 `DbDetParams` 重载（thresh / boxThresh / unclipRatio / maxCandidates / minSize），按调用临时调整检测阈值、无需改动引擎构造期配置，线程安全（临时构造 DbPostProcessor，不修改共享状态）；同步下沉到 PDF 双通道，`BaseStructuredParser` 新增 5 个 `parse(..., DbDetParams)` 重载，Spring Boot / Solon `PPOcrTemplate` 同步支持。

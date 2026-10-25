@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.autoconfigure;
 
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
@@ -55,22 +56,25 @@ public class PPOCRAutoConfiguration {
 	 * <p>字段拷贝逻辑下沉到 {@link PPOcrV6Config#from(PPOcrV6Config.Source)}，
 	 * 本方法只负责必填校验与 customizer 注入。
 	 *
-	 * <p>PDF 通道配置（{@code mica.ai.ppocr.pdf.*}）经
-	 * {@link PPOCRProperties#getPdfOcrConfig()} 转换后装入引擎配置，
-	 * 由引擎的 PDF 入口实际消费。
+	 * <p>PDF 通道配置：<b>优先采用容器里的 {@link PdfOcrConfig} Bean</b>
+	 * （业务方自定义的 Bean 会直接改变引擎行为），容器里没有时才回落
+	 * {@link PPOCRProperties#getPdfOcrConfig()}（yml 派生值 / 默认值）。
 	 *
-	 * @param properties  yml 配置属性
-	 * @param customizers PPOCRPropertiesCustomizer 集合
+	 * @param properties    yml 配置属性
+	 * @param customizers   PPOCRPropertiesCustomizer 集合
+	 * @param pdfOcrConfigs 容器中的 PdfOcrConfig（可能不存在）
 	 * @return PPOcrV6Config 实例
 	 */
 	@Bean
 	public PPOcrV6Config ppocrV6Config(PPOCRProperties properties,
-									   ObjectProvider<PPOCRPropertiesCustomizer> customizers) {
+									   ObjectProvider<PPOCRPropertiesCustomizer> customizers,
+									   ObjectProvider<PdfOcrConfig> pdfOcrConfigs) {
 		requireNonBlank(properties.getDetModelPath(), "mica.ai.ppocr.det-model-path");
 		requireNonBlank(properties.getRecModelPath(), "mica.ai.ppocr.rec-model-path");
 		requireNonBlank(properties.getRecCharDictPath(), "mica.ai.ppocr.rec-char-dict-path");
+		PdfOcrConfig pdfOcrConfig = pdfOcrConfigs.getIfAvailable(() -> properties.getPdfOcrConfig());
 		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.from(properties).toBuilder()
-			.pdfOcrConfig(properties.getPdfOcrConfig());
+			.pdfOcrConfig(pdfOcrConfig);
 		// 容器顺序应用 customizer（依赖 @Order / Ordered 即可控）
 		customizers.orderedStream().forEach(customizer -> customizer.customize(builder));
 		return builder.build();

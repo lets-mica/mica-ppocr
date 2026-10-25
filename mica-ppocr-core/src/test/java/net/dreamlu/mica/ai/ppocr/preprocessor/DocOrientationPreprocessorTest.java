@@ -132,6 +132,37 @@ class DocOrientationPreprocessorTest {
 	}
 
 	@Test
+	void call_rejectsNonBgrMat() {
+		nu.pattern.OpenCV.loadLocally();
+		DocOrientationPreprocessor pre = new DocOrientationPreprocessor();
+
+		// 1 通道（灰度）：行缓冲比一行长 → 跨行读，必须显式拒绝
+		Mat gray = new Mat(256, 300, CvType.CV_8UC1);
+		try {
+			IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> pre.call(gray));
+			assertTrue(e.getMessage().contains("CV_8UC3"), "错误信息应说明期望的通道类型");
+		} finally {
+			gray.release();
+		}
+
+		// 4 通道：通道步长错位
+		Mat rgba = new Mat(256, 300, CvType.CV_8UC4);
+		try {
+			assertThrows(IllegalArgumentException.class, () -> pre.call(rgba));
+		} finally {
+			rgba.release();
+		}
+
+		// float32：逐行 byte[] 读不支持
+		Mat f32 = new Mat(256, 300, CvType.CV_32FC3);
+		try {
+			assertThrows(IllegalArgumentException.class, () -> pre.call(f32));
+		} finally {
+			f32.release();
+		}
+	}
+
+	@Test
 	void call_emptyMat_throws() {
 		nu.pattern.OpenCV.loadLocally();
 		DocOrientationPreprocessor pre = new DocOrientationPreprocessor();

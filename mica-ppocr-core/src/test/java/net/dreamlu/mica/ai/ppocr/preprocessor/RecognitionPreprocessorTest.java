@@ -55,6 +55,46 @@ class RecognitionPreprocessorTest {
 	}
 
 	@Test
+	void call_rejectsNonBgrMat() {
+		nu.pattern.OpenCV.loadLocally();
+		RecognitionPreprocessor pre = new RecognitionPreprocessor();
+
+		// 1 通道（灰度）：行缓冲比一行长 → 跨行读；旧实现越界崩溃，新实现必须显式拒绝
+		Mat gray = new Mat(40, 400, CvType.CV_8UC1);
+		try {
+			IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+				() -> pre.call(CollUtil.listOf(gray)));
+			assertTrue(e.getMessage().contains("CV_8UC3"), "错误信息应说明期望的通道类型");
+		} finally {
+			gray.release();
+		}
+
+		// 2 通道：同上
+		Mat two = new Mat(40, 400, CvType.CV_8UC2);
+		try {
+			assertThrows(IllegalArgumentException.class, () -> pre.call(CollUtil.listOf(two)));
+		} finally {
+			two.release();
+		}
+
+		// 4 通道：行缓冲比一行短 → 通道步长错位
+		Mat rgba = new Mat(40, 400, CvType.CV_8UC4);
+		try {
+			assertThrows(IllegalArgumentException.class, () -> pre.call(CollUtil.listOf(rgba)));
+		} finally {
+			rgba.release();
+		}
+
+		// float32：逐行 byte[] 读不支持，必须显式拒绝而不是抛 OpenCV 的原始异常
+		Mat f32 = new Mat(40, 400, CvType.CV_32FC3);
+		try {
+			assertThrows(IllegalArgumentException.class, () -> pre.call(CollUtil.listOf(f32)));
+		} finally {
+			f32.release();
+		}
+	}
+
+	@Test
 	void call_emptyList() {
 		nu.pattern.OpenCV.loadLocally();
 		RecognitionPreprocessor pre = new RecognitionPreprocessor();

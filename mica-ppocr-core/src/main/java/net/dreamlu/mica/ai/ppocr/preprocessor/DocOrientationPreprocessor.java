@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.preprocessor;
 
 import lombok.ToString;
 import lombok.experimental.Accessors;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
@@ -98,11 +99,13 @@ public final class DocOrientationPreprocessor {
 	 *
 	 * @param imgBgr BGR 图像 (H, W, 3) uint8
 	 * @return 预处理结果
+	 * @throws IllegalArgumentException 输入为 null / 空 / 不是 8bit 3 通道 Mat
 	 */
 	public Result call(Mat imgBgr) {
 		if (imgBgr == null || imgBgr.empty()) {
 			throw new IllegalArgumentException("imgBgr must not be null or empty");
 		}
+		requireBgrU8(imgBgr);
 		int srcH = imgBgr.rows();
 		int srcW = imgBgr.cols();
 
@@ -166,6 +169,29 @@ public final class DocOrientationPreprocessor {
 		}
 		// OpenCV 不直接支持越界裁剪，构造子 Mat 视图即可
 		return new Mat(img, new org.opencv.core.Rect(x0, y0, crop, crop));
+	}
+
+	/**
+	 * 校验输入是 8bit 3 通道（CV_8UC3）Mat。
+	 *
+	 * <p>归一化按「每像素 3 字节」逐行读取（{@code Mat.get(row, 0, byte[])}）。
+	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"：
+	 * 通道数不是 3 时会跨行读（&lt; 3）或通道步长错位（&gt; 3），
+	 * 且不抛异常，会<b>静默产出错误的归一化张量</b>。
+	 * 旧实现（{@code matToFlatHwc} + 硬编码 3 通道下标）在同样输入下越界即抛
+	 * {@link ArrayIndexOutOfBoundsException}，故障模式由「响亮崩溃」退化为「静默错误」。
+	 * 故此处显式校验，让失败可观测。
+	 *
+	 * @param img 输入 Mat
+	 * @throws IllegalArgumentException 输入不是 CV_8UC3
+	 */
+	private static void requireBgrU8(Mat img) {
+		if (img.type() != CvType.CV_8UC3) {
+			throw new IllegalArgumentException(
+				"imgBgr 必须是 8bit 3 通道 Mat（CV_8UC3），实际 "
+					+ CvType.typeToString(img.type())
+					+ "（channels=" + img.channels() + "）");
+		}
 	}
 
 	/**
