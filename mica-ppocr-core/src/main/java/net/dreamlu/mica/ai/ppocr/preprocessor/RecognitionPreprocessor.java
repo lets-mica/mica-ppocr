@@ -152,13 +152,18 @@ public final class RecognitionPreprocessor {
 	 * 校验输入是 8bit 3 通道（CV_8UC3）Mat。
 	 *
 	 * <p>归一化按「每像素 3 字节」逐行读取（{@code Mat.get(row, 0, byte[])}）。
-	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"：
+	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"。
+	 * OpenCV 有一道前置校验：<b>数组长度必须是通道数的整数倍</b>，否则抛
+	 * {@code UnsupportedOperationException}（Provided data element number (N) should be
+	 * multiple of the Mat channels count (C)）。校验通过后，通道数与「每像素 3 字节」
+	 * 的假设不符时仍有两种<b>静默</b>错误：
 	 * <ul>
-	 *   <li>通道数 &lt; 3：行缓冲比一行长 → <b>跨行读</b>，把相邻行数据当本行像素</li>
-	 *   <li>通道数 &gt; 3：行缓冲比一行短 → 通道步长错位，首个像素对、后续全错</li>
+	 *   <li>通道数 &lt; 3：行缓冲比一行长 → <b>跨行读</b>，把相邻行数据当本行像素。
+	 *       1 通道时任何长度都是 1 的倍数，<b>永远绕得过那道校验</b> —— 灰度图必然静默出错；</li>
+	 *   <li>通道数 &gt; 3：行缓冲比一行短 → 通道步长错位，首个像素对、后续全错。
+	 *       仅当缓冲长度不是通道数倍数时，才会被上面那道校验拦下并抛异常。</li>
 	 * </ul>
-	 * 两种情况都不会抛异常，会<b>静默产出错误的归一化张量</b>。
-	 * 旧实现（{@code matToFlatHwc} + 硬编码 3 通道下标）在这两种输入下越界即抛
+	 * 旧实现（{@code matToFlatHwc} + 硬编码 3 通道下标）在这些输入下越界即抛
 	 * {@link ArrayIndexOutOfBoundsException}，故障模式由「响亮崩溃」退化为「静默错误」。
 	 * 故此处显式校验，让失败可观测。
 	 *

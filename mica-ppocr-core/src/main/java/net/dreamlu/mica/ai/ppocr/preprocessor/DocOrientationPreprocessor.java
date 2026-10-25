@@ -175,9 +175,12 @@ public final class DocOrientationPreprocessor {
 	 * 校验输入是 8bit 3 通道（CV_8UC3）Mat。
 	 *
 	 * <p>归一化按「每像素 3 字节」逐行读取（{@code Mat.get(row, 0, byte[])}）。
-	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"：
-	 * 通道数不是 3 时会跨行读（&lt; 3）或通道步长错位（&gt; 3），
-	 * 且不抛异常，会<b>静默产出错误的归一化张量</b>。
+	 * 该 API 从 (row, 0) 起<b>连续读满给定数组长度</b>，而不是"读一行"。
+	 * OpenCV 有一道前置校验：<b>数组长度必须是通道数的整数倍</b>，否则抛
+	 * {@code UnsupportedOperationException}（Provided data element number (N) should be
+	 * multiple of the Mat channels count (C)）。校验通过后，通道数不是 3 时仍会
+	 * <b>静默</b>出错：&lt; 3 时跨行读（1 通道恒能绕过校验，灰度图必然跨行读），
+	 * &gt; 3 时通道步长错位（仅当缓冲长度不是通道数倍数才被拦下抛异常）。
 	 * 旧实现（{@code matToFlatHwc} + 硬编码 3 通道下标）在同样输入下越界即抛
 	 * {@link ArrayIndexOutOfBoundsException}，故障模式由「响亮崩溃」退化为「静默错误」。
 	 * 故此处显式校验，让失败可观测。

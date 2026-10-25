@@ -367,10 +367,14 @@ CV_32F 中间 Mat。实测收益：
 2. **OpenCV Mat 视图走引用计数**：父 Mat `release()` 后子视图仍可读 ⇒ 释放顺序必须是
    「先子视图、后本体」。写反了不会立刻报错，只是 native 缓冲滞留到 GC。
 3. **`Mat.get(row, 0, byte[])` 不是「读一行」，而是「从 (row, 0) 起连续读满 `data.length` 字节」**。
-   这条语义有三个坑：
+   OpenCV 有一道**前置校验**：数组长度必须是**通道数的整数倍**，否则抛
+   `UnsupportedOperationException`（Provided data element number (N) should be multiple of
+   the Mat channels count (C)）。校验通过后仍有三个坑：
    - **行缓冲比一行长**（通道数 &lt; 预期，如 1 通道按 3 通道定长）→ **跨行读**，把相邻行数据当本行像素；
    - **行缓冲比一行短**（通道数 &gt; 预期）→ 通道步长错位，首个像素对、后续全错；
-   - 两种情况**都不抛异常**，会**静默产出错误数据**。
+   - **1 通道永远静默**：任意长度都是 1 的倍数，恒能绕过上面那道校验
+     （灰度图 → 必然跨行读）。&gt; 3 通道则视缓冲长度能否被通道数整除 ——
+     整除则静默错位，不整除才抛异常。
    ⇒ 行缓冲长度必须**严格等于** `cols() * channels()`，并在入口校验 `type()`。
    另：非连续 Mat（窄 ROI，行 stride &gt; 宽度×elemSize）读取会跨行，必须先 `clone()`；
    `Mat.get(row, col, double[])` **不支持 CV_8UC3**（type 16），CV_8UC3 用 `byte[]`；
