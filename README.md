@@ -237,7 +237,7 @@ npx skills add lets-mica/mica-ppocr
 mica:
   ai:
     ppocr:
-      # ===== 开关：设为 false 时整个 Starter 不注入任何 Bean =====
+      # ===== 开关：设为 false 时不注入任何 PP-OCR 功能 Bean（引擎 / 解析器 / 模板 / 配置）=====
       # enabled: true                                         # 默认 true
       # ===== 必填：三个模型文件路径 =====
       det-model-path: models/ppocr-v6/tiny/det.onnx          # 检测模型
@@ -281,6 +281,13 @@ mica:
 >
 > 也可以用代码覆盖：自定义一个 `PdfOcrConfig` Bean 即可（Spring `@Bean` / Solon `@Configuration`），
 > **引擎会直接采用它**，无需再改 yml。
+
+> **总开关 `mica.ai.ppocr.enabled`**：设为 `false` 时，`PPOCRAutoConfiguration` /
+> `PdfAutoConfiguration` / `StructuredParserAutoConfiguration` **三个配置类整体不生效**，
+> 容器里不会注册任何 PP-OCR 功能 Bean（引擎 / 10 个解析器 / `PPOcrTemplate` / 配置对象），
+> 应用照常启动 —— 可用于「同一套代码在部分环境不启用 OCR」的场景。
+> 例外：OpenCV 原生库仍会被加载（`OpenCVNativeLoader` 不受该开关约束），
+> 业务方若自行使用 `org.opencv.*` 需知晓这一点。
 
 ### 6.2 PPOcrTemplate API
 

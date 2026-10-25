@@ -283,6 +283,17 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 - **`PPOCRAutoConfiguration`** — auto-wires `PPOcrV6Engine` bean when `mica.ai.ppocr.enabled=true`.
 
+  ⚠️ **`mica.ai.ppocr.enabled` 是整个 Starter 的总开关**：`PPOCRAutoConfiguration` /
+  `PdfAutoConfiguration` / `StructuredParserAutoConfiguration` 三个配置类**都**受它约束
+  （Spring: `@ConditionalOnProperty`；Solon: `@Condition(onExpression = "${mica.ai.ppocr.enabled:true} == true")`），
+  关闭时**不注入任何 PP-OCR 功能 Bean**，容器照常启动。
+  （例外：`OpenCVNativeLoader` 不受该开关约束 —— OpenCV 原生库仍会加载，
+  业务方若自行使用 `org.opencv.*` 需知晓这一点；改它会凭空制造 `UnsatisfiedLinkError`。）
+  解析器 bean 以 `PPOcrV6Engine` 为构造参数注入 —— 若解析器配置类不受同一开关约束，
+  引擎 bean 缺席会导致 `NoSuchBeanDefinitionException` → **容器 refresh 失败**
+  （P0-2 回归：Spring 端 `StructuredParserAutoConfiguration` 曾漏掉该闸门）。
+  **新增自动配置类时必须一并挂上这个闸门。**
+
 - **`PPOCRProperties`** — `@ConfigurationProperties("mica.ai.ppocr")` binding，
   实现 `PPOcrV6Config.Source` 接口后由 `PPOcrV6Config.from(properties)` 一行转换。
 
@@ -299,7 +310,8 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `PPOCRAutoConfiguration.ppocrV6Config` 注入 → `PPOcrV6Config.pdfOcrConfig` →
   `PPOcrV6Engine`，由引擎的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）实际使用。
   业务方自定义同名 bean（`@ConditionalOnMissingBean` 让自动配置退让）会**直接改变引擎行为**。
-  `pdf.enabled=false` 时 bean 仍存在，但取 `PdfOcrConfig.defaults()`（忽略 yml 的 pdf 参数）。
+  `pdf.enabled=false` 时 bean 仍存在，但取 `PdfOcrConfig.defaults()`（忽略 yml 的 pdf 参数）；
+  `mica.ai.ppocr.enabled=false` 时该 bean **不存在**。
 
 - **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
 
