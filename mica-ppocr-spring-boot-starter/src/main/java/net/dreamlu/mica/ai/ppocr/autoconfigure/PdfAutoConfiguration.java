@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.autoconfigure;
 
 import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,9 +40,14 @@ import org.springframework.context.annotation.Configuration;
  *
  * <p>{@code mica.ai.ppocr.pdf.enabled=false} 时，本 Bean 仍然存在，但取
  * {@link PdfOcrConfig#defaults()}（忽略 yml 中的 pdf 参数）。
+ *
+ * <p>{@code mica.ai.ppocr.enabled=false}（整个 Starter 关闭）时本 Bean <b>不存在</b> ——
+ * 与 {@link PPOCRAutoConfiguration} / {@link StructuredParserAutoConfiguration} 保持一致，
+ * 满足「关闭 Starter 即不注入任何 Bean」的约定。
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(PPOCRProperties.class)
+@ConditionalOnProperty(prefix = "mica.ai.ppocr", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class PdfAutoConfiguration {
 
 	/**

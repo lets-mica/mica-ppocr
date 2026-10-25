@@ -38,8 +38,13 @@ import org.noear.solon.annotation.Configuration;
  *
  * <p>{@code mica.ai.ppocr.pdf.enabled=false} 时，本 Bean 仍然存在，但取
  * {@link PdfOcrConfig#defaults()}（忽略 yml 中的 pdf 参数）。
+ *
+ * <p>{@code mica.ai.ppocr.enabled=false}（整个 Starter 关闭）时本 Bean <b>不存在</b> ——
+ * 与 {@link PPOCRAutoConfiguration} / {@link StructuredParserAutoConfiguration} 保持一致，
+ * 满足「关闭 Starter 即不注入任何 Bean」的约定。
  */
 @Configuration
+@Condition(onExpression = "${mica.ai.ppocr.enabled:true} == true")
 public class PdfAutoConfiguration {
 
 	/**

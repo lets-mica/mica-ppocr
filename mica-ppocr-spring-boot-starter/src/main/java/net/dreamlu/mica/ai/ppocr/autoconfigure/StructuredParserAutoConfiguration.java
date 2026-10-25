@@ -32,6 +32,7 @@ import org.springframework.boot.autoconfigure.AutoConfigureAfter;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -46,6 +47,11 @@ import org.springframework.context.annotation.Configuration;
  * <p>每个解析器都是独立 {@code @Bean}，配合 {@link ConditionalOnMissingBean}，
  * 业务方可精确 override 单个解析器实现。
  *
+ * <p><b>启用条件与 {@link PPOCRAutoConfiguration} 一致</b>（{@code mica.ai.ppocr.enabled=true}，默认 true）：
+ * 关闭 Starter 时本配置类整体不生效。否则 10 个解析器 Bean 会因找不到
+ * {@link PPOcrV6Engine}（主配置已被关闭，引擎 Bean 不存在）而让容器 refresh 直接失败 ——
+ * 业务方就无法用「关闭开关」的方式优雅地不启用 OCR 能力。
+ *
  * <p>使用示例：
  * <pre>
  * &#64;Autowired
@@ -59,6 +65,7 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnClass(BaseStructuredParser.class)
+@ConditionalOnProperty(prefix = "mica.ai.ppocr", name = "enabled", havingValue = "true", matchIfMissing = true)
 @AutoConfigureAfter(PPOCRAutoConfiguration.class)
 public class StructuredParserAutoConfiguration {
 
