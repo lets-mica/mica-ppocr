@@ -28,12 +28,13 @@ import org.noear.solon.annotation.Configuration;
  *
  * <p>业务方可在自定义服务里通过 {@code @Inject} 注入 {@link PdfOcrConfig}。
  *
- * <p>⚠️ <b>已知限制</b>：{@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口
- * 目前硬编码 {@code PdfOcrConfig.defaults()}，<b>尚未消费这个 Bean</b> ——
- * 注入后自行读取 {@link PdfOcrConfig} 的各字段，不会改变引擎的运行行为。
+ * <p>引擎侧：同一份 {@code mica.ai.ppocr.pdf.*} 配置经
+ * {@link PPOCRProperties#getPdfOcrConfig()} → {@link net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config}
+ * 传给 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine}，
+ * <b>由引擎的 PDF 入口实际消费</b>（本 Bean 与引擎用的是同一份配置值，
+ * 但为两个独立不可变实例；本 Bean 供业务方直接注入读取）。
  *
- * <p>另注：本类目前<b>未被</b> {@link net.dreamlu.mica.ai.ppocr.solon.integration.PpocrPlugin}
- * 注册，Solon 端实际上拿不到 {@link PdfOcrConfig} bean。
+ * <p>置为 false 时不注册本 Bean，且引擎改用 {@link PdfOcrConfig#defaults()}。
  */
 @Configuration
 @Condition(onExpression = "${mica.ai.ppocr.pdf.enabled:true} == true")
@@ -48,12 +49,6 @@ public class PdfAutoConfiguration {
 	@Bean
 	@Condition(onMissingBean = PdfOcrConfig.class)
 	public PdfOcrConfig pdfOcrConfig(PPOCRProperties properties) {
-		PPOCRProperties.Pdf p = properties.getPdf();
-		return PdfOcrConfig.builder()
-			.renderDpi(p.getRenderDpi())
-			.minTextChars(p.getMinTextChars())
-			.minReadableRatio(p.getMinReadableRatio())
-			.forceOcr(p.isForceOcr())
-			.build();
+		return PdfOcrConfig.from(properties.getPdf());
 	}
 }

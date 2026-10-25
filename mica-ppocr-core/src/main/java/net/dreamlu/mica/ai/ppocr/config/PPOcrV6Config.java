@@ -19,6 +19,7 @@ package net.dreamlu.mica.ai.ppocr.config;
 import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode;
 import lombok.Builder;
 import lombok.Getter;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 
 /**
  * PP-OCRv6 引擎配置。
@@ -197,6 +198,24 @@ public final class PPOcrV6Config {
 	private ExecutionMode execMode = ExecutionMode.SEQUENTIAL;
 
 	/**
+	 * PDF 双通道配置（默认 {@link PdfOcrConfig#defaults()}）。
+	 *
+	 * <p>控制 PDF 通道的三件事：
+	 * <ul>
+	 *   <li>{@code renderDpi}：渲染通道输出 DPI（默认 200）</li>
+	 *   <li>{@code minTextChars} / {@code minReadableRatio}：文本层可用性双阈值，
+	 *       不达标时降级到「渲染 + OCR」通道</li>
+	 *   <li>{@code forceOcr}：跳过文本层探测，所有页面强制走「渲染 + OCR」</li>
+	 * </ul>
+	 *
+	 * <p>该配置由 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口消费
+	 * （{@code run(byte[])} / {@code run(Path)} 自动嗅探到 PDF 时生效）；
+	 * 图片通道不受影响。
+	 */
+	@Builder.Default
+	private PdfOcrConfig pdfOcrConfig = PdfOcrConfig.defaults();
+
+	/**
 	 * 返回使用全部默认字段的 PPOcrV6Config。
 	 *
 	 * @return 默认配置
@@ -265,6 +284,11 @@ public final class PPOcrV6Config {
 	 *
 	 * <p>约定：null 字段（如未配置的 docOrientationModelPath）会保留为 null，
 	 * 由 {@link PPOcrV6Engine} 构造器按 {@code useDocOrientationClassify} 决定是否必填。
+	 *
+	 * <p>⚠️ PDF 通道配置（{@link #pdfOcrConfig}）<b>不在 {@link Source} 白名单内</b> ——
+	 * {@code Source} 是对外公开的接口契约，新增方法会破坏既有第三方实现。
+	 * 因此 PDF 配置需显式装配：{@code PPOcrV6Config.from(source).toBuilder()
+	 * .pdfOcrConfig(pdfConfig).build()}。Spring Boot / Solon 两端自动配置已按此装配。
 	 *
 	 * @param source 配置源（spring-boot / solon 各自的 properties）
 	 * @return 构造好的 PPOcrV6Config

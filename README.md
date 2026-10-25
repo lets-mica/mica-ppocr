@@ -266,18 +266,24 @@ mica:
       # enable-memory-pattern: false                          # 内存模式优化，shape 变化时同样吃内存，默认关闭
       # ===== PDF 双通道（可选）=====
       # pdf:
-      #   enabled: true                                       # PDF 通道开关（默认 true）
+      #   enabled: true                                       # 是否应用以下 pdf 参数（false = 一律用引擎默认值）
       #   render-dpi: 200                                     # 渲染通道 DPI
-      #   min-text-chars: 10                                  # 文本层最少字符数
-      #   min-readable-ratio: 0.6                             # 文本层可读字符占比下限
+      #   min-text-chars: 20                                  # 文本层最少字符数
+      #   min-readable-ratio: 0.90                            # 文本层可读字符占比下限
       #   force-ocr: false                                    # 强制所有页走渲染 + OCR
 ```
+
+> **PDF 双通道配置已接通**：`mica.ai.ppocr.pdf.*` 会经 `PPOcrV6Config` 传到
+> `PPOcrV6Engine`，由引擎的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）实际消费，
+> 影响**文本层可用性判定**与**渲染通道 DPI**；图片通道不受影响。
+> `pdf.enabled=false` 时引擎一律使用默认值（200 / 20 / 0.90 / false）。
+> 两端默认值与 `PdfOcrConfig.defaults()` 保持一致 —— 不配置即保持原有行为。
 
 ### 6.2 PPOcrTemplate API
 
 直接注入 [`PPOcrTemplate`](mica-ppocr-spring-boot-starter/src/main/java/net/dreamlu/mica/ai/ppocr/autoconfigure/PPOcrTemplate.java) 即可使用。
 
-`StructuredParserAutoConfiguration` 会先注册 6 个内置解析器（`VehicleLicenseParser` / `IdCardParser` / `BankCardParser` / `DriverLicenseParser` / `BusinessLicenseParser` / `InvoiceParser`）与 `PPOcrV6Engine` 这 7 个 bean，再把 6 个解析器作为构造参数注入 `PPOcrTemplate`（仅当 `PPOcrV6Engine` 存在时才创建模板，避免未配置模型时启动失败）。每个解析器自带 5 种入参的 `parse(...)` 重载，见 §5。
+`StructuredParserAutoConfiguration` 会先注册 10 个内置解析器（`VehicleLicenseParser` / `IdCardParser` / `BankCardParser` / `DriverLicenseParser` / `BusinessLicenseParser` / `InvoiceParser` / `HouseholdRegisterParser` / `TrainTicketParser` / `TaxiReceiptParser` / `PddLuckyBagParser`）与 `PPOcrV6Engine` 这 11 个 bean，再把 10 个解析器作为构造参数注入 `PPOcrTemplate`（仅当 `PPOcrV6Engine` 存在时才创建模板，避免未配置模型时启动失败）。每个解析器自带 5 种入参的 `parse(...)` 重载，见 §5。
 
 #### 6.2.1 纯 OCR：`run(...)` × 5 种入参
 

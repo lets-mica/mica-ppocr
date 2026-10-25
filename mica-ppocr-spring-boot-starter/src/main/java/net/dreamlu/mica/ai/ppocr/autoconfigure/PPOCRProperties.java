@@ -19,6 +19,7 @@ package net.dreamlu.mica.ai.ppocr.autoconfigure;
 import ai.onnxruntime.OrtSession.SessionOptions.ExecutionMode;
 import lombok.Data;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -181,9 +182,9 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	 * PDF 通道配置（PDF 能力随 {@code mica-ppocr-core} 内置的 PDFBox 通道提供，
 	 * 原独立的 {@code mica-ppocr-pdf} 模块已并入 core）。
 	 *
-	 * <p>⚠️ <b>已知限制</b>：{@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 的 PDF 入口
-	 * 目前硬编码 {@code PdfOcrConfig.defaults()}（renderDpi=200 / minTextChars=20 /
-	 * minReadableRatio=0.90 / forceOcr=false），<b>并未消费本子配置</b> —— 此处改值不影响运行行为。
+	 * <p>本子配置会被转换成 {@link PdfOcrConfig}，经 {@link PPOcrV6Config} 传给
+	 * {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine}，
+	 * <b>由引擎的 PDF 入口实际消费</b>（图片通道不受影响）。
 	 *
 	 * <p>对应 yml：
 	 * <pre>
@@ -191,31 +192,50 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	 *   ai:
 	 *     ppocr:
 	 *       pdf:
+	 *         enabled: true
 	 *         render-dpi: 200
-	 *         min-text-chars: 10
-	 *         min-readable-ratio: 0.6
+	 *         min-text-chars: 20
+	 *         min-readable-ratio: 0.90
 	 *         force-ocr: false
 	 * </pre>
 	 */
 	private Pdf pdf = new Pdf();
 
 	/**
+	 * 把 PDF 子配置转换为 {@link PdfOcrConfig}。
+	 *
+	 * <p>{@code pdf.enabled=false} 时返回 {@link PdfOcrConfig#defaults()}（忽略本子配置）。
+	 *
+	 * @return PDF 双通道配置
+	 */
+	public PdfOcrConfig getPdfOcrConfig() {
+		return pdf.isEnabled() ? PdfOcrConfig.from(pdf) : PdfOcrConfig.defaults();
+	}
+
+	/**
 	 * PDF 通道子配置。
 	 */
 	@Data
-	public static class Pdf {
+	public static class Pdf implements PdfOcrConfig.Source {
+		/**
+		 * 是否应用本子配置（默认 true）。
+		 *
+		 * <p>false 时引擎忽略以下 pdf 参数，一律使用 {@link PdfOcrConfig#defaults()}
+		 * （renderDpi=200 / minTextChars=20 / minReadableRatio=0.90 / forceOcr=false）。
+		 */
+		private boolean enabled = true;
 		/**
 		 * PDF 渲染通道 DPI（默认 200）。调高提升小字精度，代价是渲染耗时与内存。
 		 */
 		private int renderDpi = 200;
 		/**
-		 * 文本层判定的最少字符数。低于此值视为扫描件，强制走 OCR 通道。
+		 * 文本层判定的最少字符数（默认 20）。低于此值视为无文本层，走「渲染 + OCR」通道。
 		 */
-		private int minTextChars = 10;
+		private int minTextChars = 20;
 		/**
-		 * 文本层判定中可读字符的最低占比（0~1）。低于此值视为扫描件，强制走 OCR 通道。
+		 * 文本层判定中可读字符的最低占比（0~1，默认 0.90）。低于此值视为无文本层，走「渲染 + OCR」通道。
 		 */
-		private double minReadableRatio = 0.6;
+		private double minReadableRatio = 0.90;
 		/**
 		 * 强制走 OCR 通道（跳过文本层判定与抽文）。用于已知是扫描件但 PDF 仍被标了文本层的场景。
 		 */

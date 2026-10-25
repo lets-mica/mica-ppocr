@@ -72,4 +72,41 @@ public class PdfOcrConfig {
 	public static PdfOcrConfig defaults() {
 		return DEFAULTS;
 	}
+
+	/**
+	 * 通用配置源：把任意具有同名 getter 的属性对象转换为 {@link PdfOcrConfig}。
+	 *
+	 * <p>与 {@link net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config.Source} 同构：
+	 * core 不依赖 spring-boot / solon，接口契约以"用得到的 getter 名"为白名单，
+	 * 由两端实现自行暴露。
+	 *
+	 * @author L.cm
+	 */
+	public interface Source {
+		int getRenderDpi();
+
+		int getMinTextChars();
+
+		double getMinReadableRatio();
+
+		boolean isForceOcr();
+	}
+
+	/**
+	 * 把 {@link Source} 配置源转换为 {@link PdfOcrConfig}。
+	 *
+	 * @param source 配置源（spring-boot / solon 各自的 pdf 子配置）
+	 * @return 构造好的 PdfOcrConfig；{@code source} 为 null 时返回 {@link #defaults()}
+	 */
+	public static PdfOcrConfig from(Source source) {
+		if (source == null) {
+			return defaults();
+		}
+		return builder()
+			.renderDpi(source.getRenderDpi())
+			.minTextChars(source.getMinTextChars())
+			.minReadableRatio(source.getMinReadableRatio())
+			.forceOcr(source.isForceOcr())
+			.build();
+	}
 }

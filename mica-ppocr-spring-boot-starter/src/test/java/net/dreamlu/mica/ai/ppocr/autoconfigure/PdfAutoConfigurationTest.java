@@ -48,9 +48,11 @@ class PdfAutoConfigurationTest {
 			.run(context -> {
 				assertThat(context).hasBean("pdfOcrConfig");
 				PdfOcrConfig cfg = context.getBean(PdfOcrConfig.class);
-				// 默认值
+				// 默认值与 PdfOcrConfig.defaults() 保持一致（引擎默认行为不变）
 				assertThat(cfg.getRenderDpi()).isEqualTo(200);
-				assertThat(cfg.getMinTextChars()).isEqualTo(10);
+				assertThat(cfg.getMinTextChars()).isEqualTo(20);
+				assertThat(cfg.getMinReadableRatio()).isEqualTo(0.90);
+				assertThat(cfg.isForceOcr()).isFalse();
 			});
 	}
 

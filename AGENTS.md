@@ -294,9 +294,11 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
   - `PPOcrTemplate` 通过 `vehicleLicense()` / `idCard()` 等 getter 获取已绑定 engine 的解析器实例。
 
-- **`PdfAutoConfiguration`** — 把 `mica.ai.ppocr.pdf.*` 绑定为 `PdfOcrConfig` bean。
-  ⚠️ 当前 `PPOcrV6Engine` 的 PDF 入口硬编码 `PdfOcrConfig.defaults()`，**尚未消费这个 bean**，
-  故 `pdf.*` 配置当前对运行行为不生效（详见 README §6.1 的提示）。
+- **`PdfAutoConfiguration`** — 把 `mica.ai.ppocr.pdf.*` 绑定为 `PdfOcrConfig` bean，
+  供业务方直接注入读取。**同一份配置同时被引擎消费**：
+  `PPOCRProperties.getPdfOcrConfig()` → `PPOcrV6Config.pdfOcrConfig` → `PPOcrV6Engine`，
+  由引擎的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）实际使用。
+  `pdf.enabled=false` 时引擎回落到 `PdfOcrConfig.defaults()`。
 
 - **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
 
@@ -306,9 +308,9 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 差异只在框架注解：Solon 用 `@BindProps` + `@Condition`，Spring 用 `@ConfigurationProperties` +
 `@ConditionalOnProperty` / `@ConditionalOnMissingBean`。
 
-- **`PpocrPlugin`**（`integration/` 包）— 插件入口，**显式 `beanMake` 各自动配置类**。
-  ⚠️ 当前只注册 `PPOCRProperties` / `OpenCVNativeLoader` / `PPOCRAutoConfiguration` /
-  `StructuredParserAutoConfiguration`，**独缺 `PdfAutoConfiguration`** —— Solon 端拿不到 `PdfOcrConfig` bean。
+- **`PpocrPlugin`**（`integration/` 包）— 插件入口，**显式 `beanMake` 各自动配置类**：
+  `PPOCRProperties` / `OpenCVNativeLoader` / `PPOCRAutoConfiguration` /
+  `PdfAutoConfiguration` / `StructuredParserAutoConfiguration`。
 
 ### Porting conventions
 

@@ -51,6 +51,10 @@ public class PPOCRAutoConfiguration {
 	 * <p>字段拷贝逻辑下沉到 {@link PPOcrV6Config#from(PPOcrV6Config.Source)}，
 	 * 本方法只负责必填校验与 customizer 注入。
 	 *
+	 * <p>PDF 通道配置（{@code mica.ai.ppocr.pdf.*}）经
+	 * {@link PPOCRProperties#getPdfOcrConfig()} 转换后装入引擎配置，
+	 * 由引擎的 PDF 入口实际消费。
+	 *
 	 * @param properties  yml 配置属性
 	 * @param customizers PPOCRPropertiesCustomizer 集合
 	 * @return PPOcrV6Config 实例
@@ -61,7 +65,8 @@ public class PPOCRAutoConfiguration {
 		requireNonBlank(properties.getDetModelPath(), "mica.ai.ppocr.det-model-path");
 		requireNonBlank(properties.getRecModelPath(), "mica.ai.ppocr.rec-model-path");
 		requireNonBlank(properties.getRecCharDictPath(), "mica.ai.ppocr.rec-char-dict-path");
-		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.from(properties).toBuilder();
+		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.from(properties).toBuilder()
+			.pdfOcrConfig(properties.getPdfOcrConfig());
 		// 容器顺序应用 customizer（依赖 @Order / Ordered 即可控）
 		customizers.forEach(customizer -> customizer.customize(builder));
 		return builder.build();

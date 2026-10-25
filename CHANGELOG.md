@@ -3,6 +3,10 @@
 ## 发行版本
 
 ### 未发布
+- feat(core): 接通 `PdfOcrConfig` —— `mica.ai.ppocr.pdf.*` 不再是死配置。`PPOcrV6Config` 新增 `pdfOcrConfig` 字段，`PPOcrV6Engine` 的 PDF 入口（`run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 时）改为消费该配置而非硬编码 `PdfOcrConfig.defaults()`，影响**文本层可用性判定**与**渲染通道 DPI**；新增 `PPOcrV6Engine#getPdfOcrConfig()` 便于观测生效值。`PdfOcrConfig` 新增 `Source` 契约与 `from(Source)` 工厂（与 `PPOcrV6Config.Source` 同构），两端 `PPOCRProperties.Pdf` 实现该契约，转换逻辑只有一处。
+- fix(core): 对齐 `mica.ai.ppocr.pdf.*` 的两端默认值与 `PdfOcrConfig.defaults()` —— 原 properties 默认为 `minTextChars=10 / minReadableRatio=0.6`，引擎实际用的是 `20 / 0.90`。现已统一为 `20 / 0.90`，**不配置即保持原有运行行为**。
+- feat(starter): 新增 `mica.ai.ppocr.pdf.enabled` 属性并明确语义 —— `false` 时引擎一律使用 `PdfOcrConfig.defaults()`（忽略 yml 中的 pdf 参数），而非仅"不注册 bean"。
+- fix(solon): `PpocrPlugin` 补注册 `PdfAutoConfiguration` —— Solon 端此前拿不到 `PdfOcrConfig` bean。
 - perf(core): 检测预处理内存融合。归一化结果直接写入 CHW 输出数组，去掉 HWC flat 中间数组与 CV_32F 中间 Mat，峰值堆内存从 2 份降到 1 份。3000×4000 图实测堆分配 275 MB → 137 MB（-50%），耗时 110 ms → 42 ms（2.6×）；uint8 → CV_32F 与 uint8 → 提升为 float 在 0~255 上逐位相同，数值与 Python 参考实现保持 bit-exact（新增 `DetectionPreprocessorTest` 回归锁定）。
 - perf(core): 识别预处理内存融合。逐框 resize 后直接归一化写入 NCHW，去掉每框的 CV_32F 中间 Mat 与 HWC flat 数组，且不再需要同时持有全部框的 HWC 数据才能进入第二阶段。50 框 × 1200px 宽实测堆分配 79.1 MB → 39.8 MB（-50%），耗时 21.1 ms → 15.9 ms（-25%），另省约 40 MB native 内存；数值 bit-exact（新增 `RecognitionPreprocessorTest` 回归锁定）。
 - perf(core): 文档方向预处理同型融合，去掉 CV_32F 中间 Mat 与 HWC flat 数组，改为逐行读 uint8 直写 CHW。

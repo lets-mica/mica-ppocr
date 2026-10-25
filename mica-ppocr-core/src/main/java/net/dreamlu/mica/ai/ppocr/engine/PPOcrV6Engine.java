@@ -158,6 +158,11 @@ public final class PPOcrV6Engine implements Closeable {
 	 * PDF 文本层抽取器（线程安全，复用）。
 	 */
 	private final PdfTextExtractor pdfExtractor = new PdfTextExtractor();
+	/**
+	 * PDF 双通道配置（构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取，
+	 * 为 null 时回落 {@link PdfOcrConfig#defaults()}）。
+	 */
+	private final PdfOcrConfig pdfOcrConfig;
 
 	/**
 	 * 引擎是否已关闭，{@link #close()} 幂等保护。
@@ -193,6 +198,8 @@ public final class PPOcrV6Engine implements Closeable {
 			throw new IllegalArgumentException("recImageShape must be [C, H, W]");
 		}
 		this.docOriEnabled = config.isUseDocOrientationClassify();
+		PdfOcrConfig configuredPdf = config.getPdfOcrConfig();
+		this.pdfOcrConfig = configuredPdf == null ? PdfOcrConfig.defaults() : configuredPdf;
 		if (docOriEnabled) {
 			if (config.getDocOrientationModelPath() == null || config.getDocOrientationModelPath().isEmpty()) {
 				throw new IllegalArgumentException(
@@ -345,6 +352,18 @@ public final class PPOcrV6Engine implements Closeable {
 	private void closeOnInitFailure(Exception cause) {
 		closeSessions(cause::addSuppressed);
 		closed = true;
+	}
+
+	/**
+	 * 返回生效中的 PDF 双通道配置。
+	 *
+	 * <p>即构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取到的值；
+	 * 未显式配置时为 {@link PdfOcrConfig#defaults()}。
+	 *
+	 * @return PDF 双通道配置
+	 */
+	public PdfOcrConfig getPdfOcrConfig() {
+		return pdfOcrConfig;
 	}
 
 	/**
@@ -519,7 +538,7 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			if (PdfMagicDetector.isPdf(head)) {
 				try {
-					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), PdfOcrConfig.defaults(), detParams));
+					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), pdfOcrConfig, detParams));
 				} catch (IOException e) {
 					throw new UncheckedIOException(e);
 				}
@@ -573,7 +592,7 @@ public final class PPOcrV6Engine implements Closeable {
 		}
 		if (PdfMagicDetector.isPdf(imgBytes)) {
 			try {
-				return flattenPdfPages(runPdfBytes(imgBytes, PdfOcrConfig.defaults(), detParams));
+				return flattenPdfPages(runPdfBytes(imgBytes, pdfOcrConfig, detParams));
 			} catch (IOException e) {
 				throw new UncheckedIOException(e);
 			}
@@ -1185,21 +1204,6 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param pdfBytes PDF 字节
 	 * @param config   PDF 配置（不可为 null）
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
-	 */
-	private List<PdfPageResult> runPdfBytes(byte[] pdfBytes, PdfOcrConfig config) throws IOException {
-		return runPdfBytes(pdfBytes, config, null);
-	}
-
-	/**
-	 * PDF 双通道解析（核心入口）。
-	 *
-	 * <p>按 {@link PdfOcrConfig} 配置：每页先尝试文本层坐标抽取，
-	 * 文本质量不达标时降级到渲染 + OCR。
-	 *
-	 * @param pdfBytes  PDF 字节
-	 * @param config    PDF 配置（不可为 null）
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
 	 * @return per-page 结果列表
 	 * @throws IOException PDF 解析失败
@@ -1230,10 +1234,6 @@ public final class PPOcrV6Engine implements Closeable {
 		return pages.stream()
 			.flatMap(page -> page.results().stream())
 			.collect(Collectors.toList());
-	}
-
-	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config) throws IOException {
-		return runPdfPages(doc, config, null);
 	}
 
 	/**
@@ -1278,13 +1278,6 @@ public final class PPOcrV6Engine implements Closeable {
 	 */
 	private static PDFRenderer ensureRenderer(PDDocument doc, PDFRenderer renderer) {
 		return renderer != null ? renderer : new PDFRenderer(doc);
-	}
-
-	/**
-	 * 渲染通道：按配置 DPI 渲染页面为 BGR Mat，走完整 OCR 链路。
-	 */
-	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config) throws IOException {
-		return ocrPdfPage(pageIndex, renderer, config, null);
 	}
 
 	/**
