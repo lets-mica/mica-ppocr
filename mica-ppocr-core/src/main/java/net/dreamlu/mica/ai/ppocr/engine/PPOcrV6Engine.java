@@ -161,7 +161,14 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * PDF 双通道配置（构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取，
 	 * 为 null 时回落 {@link PdfOcrConfig#defaults()}）。
+	 * -- GETTER --
+	 *  返回生效中的 PDF 双通道配置。
+	 *  <p>即构造期从
+	 *  取到的值；
+	 *  未显式配置时为
+	 * 。
 	 */
+	@Getter
 	private final PdfOcrConfig pdfOcrConfig;
 
 	/**
@@ -352,18 +359,6 @@ public final class PPOcrV6Engine implements Closeable {
 	private void closeOnInitFailure(Exception cause) {
 		closeSessions(cause::addSuppressed);
 		closed = true;
-	}
-
-	/**
-	 * 返回生效中的 PDF 双通道配置。
-	 *
-	 * <p>即构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取到的值；
-	 * 未显式配置时为 {@link PdfOcrConfig#defaults()}。
-	 *
-	 * @return PDF 双通道配置
-	 */
-	public PdfOcrConfig getPdfOcrConfig() {
-		return pdfOcrConfig;
 	}
 
 	/**
