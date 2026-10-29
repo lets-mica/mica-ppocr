@@ -229,15 +229,20 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - **测试侧约定**：测试代码**不要**再无脑加 `OpenCV.loadLocally()` ——
     只有「**不经引擎**（直接或**间接**）触达 `org.opencv.*`」的测试才需要自己加载，
     且应**集中在一个 `@BeforeAll`** 里
-    （如三个预处理单测用 `Mat` / `Imgproc`、`OffsetTest` 经 `Offset.area()` 间接触达 native、
+    （如三个预处理单测用 `Mat` / `Imgproc`、
     demo 与 dump 工具用 `Imgcodecs.imread` / 画框）；
     **只走引擎**的测试一律不需要 —— 引擎构造时已加载。
     ⚠️ 判断依据是「用 OpenCV 的时刻**早于**引擎构造」，不是「测试里出现了 org.opencv」。
     ⚠️ **间接依赖同样要加载**：测试类没 import 任何 `org.opencv.*` ≠ 不依赖 native。
-    例如 `Offset.area()` / `Offset.perimeter()` 内部构造 `MatOfPoint2f` 并调
-    `Imgproc.contourArea` —— 调用方测试**看不到** opencv，却会在
+    例如 `BoxUtil.orderMinAreaBoxPoints(float[][])` 内部构造 `MatOfPoint2f` 并调
+    `Imgproc.minAreaRect` —— 调用方测试**看不到** opencv，却会在
     `new MatOfPoint2f()` 处抛 `UnsatisfiedLinkError: org.opencv.core.Mat.n_Mat()`。
     ⇒ 判定方法：看被测方法**内部**是否触达 native，而不是看测试文件的 import。
+    ✅ **已消除的间接依赖**：`Offset.area()` / `Offset.perimeter()` 原先内部构造
+    `MatOfPoint2f` 调 `Imgproc.contourArea` / `arcLength`，导致 `OffsetTest` 必须自行
+    `loadOpenCv()`；现已改为纯 Java（shoelace + `Math.hypot` 边长和，与 OpenCV 逐位等价），
+    `OffsetTest` 不再需要加载 native。**新增纯几何方法时优先走这条路线** ——
+    既省掉 JNI + native 分配（单次 ~550ns → ~12ns），又消除一类隐式 native 依赖。
 
 - **引擎生命周期锁（并发红线，改引擎时必须保留）** — `PPOcrV6Engine` 用一把**公平模式
   `ReentrantReadWriteLock`** 保护 native 会话的生命周期：

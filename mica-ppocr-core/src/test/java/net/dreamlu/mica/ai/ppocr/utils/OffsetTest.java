@@ -16,33 +16,19 @@
 
 package net.dreamlu.mica.ai.ppocr.utils;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Offset（多边形偏移）单元测试。
+ *
+ * <p><b>本测试不需要加载 OpenCV 原生库</b>：{@link Offset#area(float[][])} /
+ * {@link Offset#perimeter(float[][])} 已改为纯 Java 实现（shoelace + 边长和），
+ * {@link Offset#unclip} 走 JTS（纯 Java，无 native）——
+ * 整条链路不再触达 {@code org.opencv.*}。
  */
 class OffsetTest {
-
-	/**
-	 * 加载 OpenCV 原生库。
-	 *
-	 * <p><b>为什么本测试需要自己加载</b>：{@link Offset#area(float[][])} /
-	 * {@link Offset#perimeter(float[][])} 内部直接构造 OpenCV 的 {@code MatOfPoint2f}
-	 * 并调用 {@code Imgproc.contourArea} / {@code Imgproc.arcLength}，而本测试
-	 * <b>不经引擎</b>（没有构造 {@code PPOcrV6Engine}），所以引擎构造期的
-	 * {@code ensureOpenCvLoaded()} 不会兜底。
-	 *
-	 * <p>判定依据是「用 OpenCV 的时刻早于引擎构造」，而不是「测试里出现了 org.opencv」——
-	 * 本类没有 import 任何 {@code org.opencv.*}，但间接依赖 native，
-	 * 因此仍须在此处集中加载一次（{@code OpenCV.loadLocally()} 幂等且线程安全）。
-	 */
-	@BeforeAll
-	static void loadOpenCv() {
-		nu.pattern.OpenCV.loadLocally();
-	}
 
 	@Test
 	void area_square() {

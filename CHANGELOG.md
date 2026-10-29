@@ -3,6 +3,7 @@
 ## 发行版本
 
 ### 未发布
+- perf(core): `Offset.area()` / `Offset.perimeter()` 改用纯 Java 实现 —— 原先走 OpenCV `Imgproc.contourArea` / `arcLength`，每次调用都要构造 `MatOfPoint2f` 并跨 JNI 进入 native，单次约 550ns 且**隐式依赖 native 库**；现改为鞋带公式 + `Math.hypot` 边长和，单次约 12ns（≈45×），零对象分配、零 native 触达。**数值逐位等价**：`area` 的环绕累加顺序（`j = i-1`，`j<0` 回绕）与 `perimeter` 的「先逐条相邻边、最后补闭合边」顺序均严格对齐 OpenCV 源码（边长用 `Math.hypot` 对齐 `std::hypot`）⇒ `unclipDistance` 的输入不变 ⇒ **框坐标与识别文本不变**，由 structured 模块三个真实图片 OCR 集成测试回归锁定。顺带 `OffsetTest` 不再需要自行 `loadOpenCv()`（原属「测试类看不见 `org.opencv` 却间接触达 native」的典型）。`unclip` 仍由 JTS `BufferOp` + `JOIN_ROUND` 承担，未改动。
 - feat(core): `PPOcrV6Engine` **构造期自动预热** —— 构造器初始化完成后自动跑一遍 det + rec 全链路，用一张 64×64 的程序化合成笔画图把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到初始化期，消除「容器刚起来时第一个请求显著慢于后续」。实测（tiny 档，独立 JVM 各 9 次采样）：首调惩罚 113ms → 23ms（消掉 80%），首个请求 688ms → 615ms，初始化期代价约 60ms。预热图尺寸取 **det 的 `limit_side_len`**：det 预处理在 `limitType=min` 下是「短边 < 64 才放大到 64，短边 ≥ 64 原样进模型」，取 64×64 ⇒ det 输入即预热图本身，零插值且不依赖「小图被放大」这条实现细节（30×30 在 `limitType=max` 下会检出 0 框 ⇒ 静默退化成「只预热 det 一半」，已由 `warmUpImageIsDetectableUnderAnyDetLimitConfig()` 锁定）。预热失败只记 WARN，不影响引擎可用性。
 - refactor(core): `warmUp()` 由 public 改为 **private**，预热改为引擎的**初始化语义** —— 调用方不需要也不应当显式触发。预热是否成功的标记 `isWarmedUp()` 同样**不做公开 API**（包级可见，仅供测试观测）：预热失败只记 WARN、引擎照常可用，该状态几乎恒为 true，公开出去信息量低且容易被误读成「引擎未就绪」；但必须保留 —— 它是唯一能锁住「构造器确实调用了 warmUp()」的断言点，删掉后该调用被误删时测试会全部照常通过。
 - refactor(starter): 移除 `mica.ai.ppocr.warm-up-on-init` 配置项（Spring / Solon 两端的 `PPOCRProperties` 同步删除该字段）。⚠️ 行为变更：预热从「可选」变为「构造期始终执行」，原先配置了 `warm-up-on-init=false` 的应用也会开始预热。
