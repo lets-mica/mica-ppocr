@@ -338,6 +338,16 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 - **`preprocessor/DetectionPreprocessor`** — resize to limit-side constraints, normalize, HWC→NCHW.
 
+  - ⚠️ **三个预处理器的「逐行读 Mat」不要改成「整块读」**（已实测后决定维持现状）：
+    `Mat.get(row, 0, byte[])` 每次调用实际是 **2 次 JNI**（`type()` + `nGetB`），
+    逐行读 rec 预处理一次 OCR 要 1728 次调用 = 3456 次边界穿越；
+    改成 `Mat.get(0, 0, byte[])` 整块读确实快 **3.4×**（5 411 → 1 602 ns/图），
+    但**端到端只省 0.008%**（一次 OCR 1 671 ms 里省 137 µs），
+    代价是 Java 侧瞬时峰值内存涨 16~450 KB（整块 byte[] vs 复用的行缓冲）。
+    ⇒ 收益在噪声级别，不值当。**别再重复排查这一项。**
+    附：整块读要求 `byte[]` 长度**精确等于** `h*w*channels` —— OpenCV 只校验「长度是通道数倍数」，
+    传大了会越界读（就是 `RecognitionPreprocessor` javadoc 里警告的「跨行读」陷阱）。
+
 - **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes。
   配合 [`DbDetParams`](mica-ppocr-core/src/main/java/net/dreamlu/mica/ai/ppocr/postprocessor/DbDetParams.java) 不可变值对象，
   通过 `engine.detectMat(Mat, DbDetParams)` 可按调用临时覆盖阈值（thresh/boxThresh/unclipRatio），
