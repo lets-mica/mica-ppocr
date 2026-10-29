@@ -227,10 +227,17 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - **副作用**：`mica.ai.ppocr.enabled=false` 时引擎 bean 不存在 ⇒ **OpenCV 也不再加载**，
     业务方自行使用 `org.opencv.*` 需自己 `loadLocally()`。
   - **测试侧约定**：测试代码**不要**再无脑加 `OpenCV.loadLocally()` ——
-    只有「**不经引擎**直接用 `org.opencv.*`」的测试才需要自己加载，且应**集中在一个 `@BeforeAll`** 里
-    （如三个预处理单测用 `Mat` / `Imgproc`、demo 与 dump 工具用 `Imgcodecs.imread` / 画框）；
+    只有「**不经引擎**（直接或**间接**）触达 `org.opencv.*`」的测试才需要自己加载，
+    且应**集中在一个 `@BeforeAll`** 里
+    （如三个预处理单测用 `Mat` / `Imgproc`、`OffsetTest` 经 `Offset.area()` 间接触达 native、
+    demo 与 dump 工具用 `Imgcodecs.imread` / 画框）；
     **只走引擎**的测试一律不需要 —— 引擎构造时已加载。
     ⚠️ 判断依据是「用 OpenCV 的时刻**早于**引擎构造」，不是「测试里出现了 org.opencv」。
+    ⚠️ **间接依赖同样要加载**：测试类没 import 任何 `org.opencv.*` ≠ 不依赖 native。
+    例如 `Offset.area()` / `Offset.perimeter()` 内部构造 `MatOfPoint2f` 并调
+    `Imgproc.contourArea` —— 调用方测试**看不到** opencv，却会在
+    `new MatOfPoint2f()` 处抛 `UnsatisfiedLinkError: org.opencv.core.Mat.n_Mat()`。
+    ⇒ 判定方法：看被测方法**内部**是否触达 native，而不是看测试文件的 import。
 
 - **引擎生命周期锁（并发红线，改引擎时必须保留）** — `PPOcrV6Engine` 用一把**公平模式
   `ReentrantReadWriteLock`** 保护 native 会话的生命周期：
