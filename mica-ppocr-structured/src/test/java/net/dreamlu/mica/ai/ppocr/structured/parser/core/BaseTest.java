@@ -226,7 +226,7 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 	 */
 	public final void demo(String imagePath, String visPath, String... tiers) {
 		String[] actualTiers = (tiers == null || tiers.length == 0) ? DEMO_TIERS : tiers.clone();
-		// 加载 OpenCV 原生库
+		// 加载 OpenCV 原生库（本方法在构造引擎之前就直接用 Imgcodecs 读图 / 画框）
 		nu.pattern.OpenCV.loadLocally();
 		// 读取图片
 		System.out.println("Image:  " + imagePath);

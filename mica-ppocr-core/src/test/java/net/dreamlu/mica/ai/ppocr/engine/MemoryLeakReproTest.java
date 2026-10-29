@@ -15,7 +15,6 @@ import com.sun.management.ThreadMXBean;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.io.File;
@@ -56,11 +55,6 @@ class MemoryLeakReproTest {
 		(OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 	// 容器/裸机通用容差：warmup 后每次 checkpoint RSS 波动不超过 80 MB
 	private static final long RSS_FLOOR_TOLERANCE_BYTES = 80L * 1024 * 1024;
-
-	@BeforeAll
-	static void loadOpenCv() {
-		nu.pattern.OpenCV.loadLocally();
-	}
 
 	@Test
 	void fullPipelineMemoryStableAcrossDifferentImages() {

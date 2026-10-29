@@ -17,6 +17,7 @@
 package net.dreamlu.mica.ai.ppocr.preprocessor;
 
 import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -33,6 +34,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * 仍必须保证「调用方的 Mat 不会被误释放」且「归一化结果逐位不变」。
  */
 class DocOrientationPreprocessorTest {
+
+	/**
+	 * 本测试直接使用 {@code org.opencv.*}（不经过 {@code PPOcrV6Engine}），
+	 * 引擎的构造期自动加载管不到这里，需自行加载 native 库。
+	 */
+	@BeforeAll
+	static void loadOpenCv() {
+		nu.pattern.OpenCV.loadLocally();
+	}
 
 	/**
 	 * 旧实现作为参考：resizeShort → centerCrop → CV_32F → 归一化 → CHW。
@@ -89,7 +99,6 @@ class DocOrientationPreprocessorTest {
 
 	@Test
 	void call_bitExact_matchesReference() {
-		nu.pattern.OpenCV.loadLocally();
 		Mat img = new Mat(300, 400, CvType.CV_8UC3);
 		for (int r = 0; r < 300; r++) {
 			for (int c = 0; c < 400; c++) {
@@ -111,7 +120,6 @@ class DocOrientationPreprocessorTest {
 
 	@Test
 	void call_doesNotReleaseCallerMat() {
-		nu.pattern.OpenCV.loadLocally();
 		// 短边正好 256 → resizeShort 直接返回原图（ownsResized=false），
 		// cropped 是调用方 Mat 的子视图；释放视图不得连带释放调用方的数据
 		Mat img = new Mat(256, 300, CvType.CV_8UC3, new Scalar(11, 22, 33));
@@ -133,7 +141,6 @@ class DocOrientationPreprocessorTest {
 
 	@Test
 	void call_rejectsNonBgrMat() {
-		nu.pattern.OpenCV.loadLocally();
 		DocOrientationPreprocessor pre = new DocOrientationPreprocessor();
 
 		// 1 通道（灰度）：行缓冲比一行长 → 跨行读，必须显式拒绝
@@ -164,7 +171,6 @@ class DocOrientationPreprocessorTest {
 
 	@Test
 	void call_emptyMat_throws() {
-		nu.pattern.OpenCV.loadLocally();
 		DocOrientationPreprocessor pre = new DocOrientationPreprocessor();
 		Mat empty = new Mat();
 		try {

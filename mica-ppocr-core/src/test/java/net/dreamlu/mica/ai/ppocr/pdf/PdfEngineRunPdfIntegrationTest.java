@@ -89,7 +89,6 @@ class PdfEngineRunPdfIntegrationTest {
 				&& Files.isRegularFile(modelDir.resolve("dict.txt")),
 			"tiny 模型缺失，跳过集成测试");
 
-		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
 			// 整页位图 PDF（无文本层）应走 OCR 通道，调用方拿到结果（空集也算成功完成）
 			List<PPOcrV6Result> results = engine.run(imageOnlyPdf());
@@ -107,7 +106,6 @@ class PdfEngineRunPdfIntegrationTest {
 				&& Files.isRegularFile(modelDir.resolve("dict.txt")),
 			"tiny 模型缺失，跳过集成测试");
 
-		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = newEngine(modelDir)) {
 			// 多页文字型 PDF → run(byte[]) 应自动按 PDF 双通道处理并平铺所有页
 			List<PPOcrV6Result> flat = engine.run(multiPageTextPdf(3));
@@ -117,7 +115,6 @@ class PdfEngineRunPdfIntegrationTest {
 	}
 
 	private static PPOcrV6Engine newEngine(Path modelDir) {
-		nu.pattern.OpenCV.loadLocally();
 		PPOcrV6Config config = PPOcrV6Config.builder()
 			.detModelPath(modelDir.resolve("det.onnx").toString())
 			.recModelPath(modelDir.resolve("rec.onnx").toString())

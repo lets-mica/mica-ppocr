@@ -164,6 +164,40 @@ class PPOCRAutoConfigurationTest {
 			});
 	}
 
+	/**
+	 * 端到端：<b>预热失败不得让容器启动失败</b>。
+	 *
+	 * <p>失败注入：用 {@code doc_ori} 模型冒充 rec 模型 —— ONNX Session 能正常创建，
+	 * 但预热推理时 rec 的输入 shape（3×48×W）与之不匹配 ⇒ 预热必然失败。
+	 * 预热是「尽力而为」的优化手段，失败只记 WARN，引擎照常可用、容器照常启动。
+	 *
+	 * <p>预热本身的语义（跑通 det+rec、失败不影响可用性）由 core 模块
+	 * {@code PPOcrV6EngineWarmUpTest} 覆盖。
+	 */
+	@Test
+	void shouldStartEvenWhenWarmUpFails() {
+		Path root = findRepositoryRoot();
+		Path modelDir = root.resolve("models/ppocr-v6");
+		Path docOri = modelDir.resolve("doc_ori/doc_ori.onnx");
+		Assumptions.assumeTrue(Files.isDirectory(modelDir.resolve("tiny")), "requires tiny models on disk");
+		Assumptions.assumeTrue(Files.isRegularFile(docOri), "requires doc_ori model on disk");
+
+		runner
+			.withPropertyValues(
+				"mica.ai.ppocr.det-model-path=" + modelDir.resolve("tiny/det.onnx"),
+				// 故意用 doc_ori 冒充 rec：Session 可建，但推理 shape 不匹配 ⇒ 预热必失败
+				"mica.ai.ppocr.rec-model-path=" + docOri,
+				"mica.ai.ppocr.rec-char-dict-path=" + modelDir.resolve("tiny/dict.txt")
+			)
+			.run(context -> {
+				assertThat(context).hasNotFailed();
+				assertThat(context).hasSingleBean(PPOcrV6Engine.class);
+				PPOcrV6Engine engine = context.getBean(PPOcrV6Engine.class);
+				assertThat(engine.isClosed()).isFalse();
+				engine.close();
+			});
+	}
+
 	private static Path findRepositoryRoot() {
 		String multiModuleDir = System.getProperty("maven.multiModuleProjectDirectory");
 		if (multiModuleDir != null) {

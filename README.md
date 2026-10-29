@@ -117,13 +117,13 @@ issueDate:    2018-02-24
 > - `Path` 重载兼容非默认文件系统（如 ZIP / JIMFS / 内存 FS）：优先走 native 文件读取，不支持的 FileSystem 自动退回 `Files.readAllBytes`。
 > - `run(byte[])` / `run(Path)` 会嗅探 `%PDF-` 魔数，命中时自动走 PDF 双通道并平铺所有页结果。
 > - 确需复用已加载 `Mat` 的高级场景（如同一图跑多次推理），可使用 `runMat(Mat)` / `detectMat(Mat)` / `recognizeMat(List<Mat>)`（`Mat` 的 release 由调用方负责）。
+> - `close()` 是**有界等待**：最多等 1 秒让在途推理自然结束；超时则引擎立即退役（新请求被拒），native 会话**延后**到在途推理结束后由守护线程释放 —— 关停不会被长耗时推理（多页 PDF OCR）拖住，也不会出现 native 层崩溃。
 
 ### 4.2 完整示例
 
 ```java
 public class Demo {
     public static void main(String[] args) {
-        OpenCV.loadLocally();  // 首次启动时加载 native 库
         PPOcrV6Config config = PPOcrV6Config.builder()
             .detModelPath("models/ppocr-v6/tiny/det.onnx")
             .recModelPath("models/ppocr-v6/tiny/rec.onnx")
@@ -286,8 +286,15 @@ mica:
 > `PdfAutoConfiguration` / `StructuredParserAutoConfiguration` **三个配置类整体不生效**，
 > 容器里不会注册任何 PP-OCR 功能 Bean（引擎 / 10 个解析器 / `PPOcrTemplate` / 配置对象），
 > 应用照常启动 —— 可用于「同一套代码在部分环境不启用 OCR」的场景。
-> 例外：OpenCV 原生库仍会被加载（`OpenCVNativeLoader` 不受该开关约束），
-> 业务方若自行使用 `org.opencv.*` 需知晓这一点。
+> 注意：OpenCV 原生库由 `PPOcrV6Engine` 构造期加载，开关关闭时引擎 bean 缺席 ⇒ **OpenCV 也不会加载**，
+> 业务方若自行使用 `org.opencv.*`，需自行 `nu.pattern.OpenCV.loadLocally()`。
+
+> **构造期自动预热（无需任何调用）**：`new PPOcrV6Engine(config)` 的构造器内部会跑一次预热 ——
+> 用一张 64×64 的程序化合成笔画图跑通 det + rec 全链路，把 ONNX Runtime 的计算图优化、
+> 内存池初始化与 JIT 提前到初始化期 —— 消除「容器刚起来时第一个请求显著慢于后续」。
+> 实测（tiny 档，独立 JVM 各 9 次采样）：首调惩罚 113ms → 23ms，首个请求 688ms → 615ms；
+> 初始化期代价 tiny 约 60ms / small 约 90ms。预热失败只记 WARN，不影响引擎可用性。
+> 预热是引擎的初始化语义，**没有开关、也不需要业务方调用**。
 
 ### 6.2 PPOcrTemplate API
 

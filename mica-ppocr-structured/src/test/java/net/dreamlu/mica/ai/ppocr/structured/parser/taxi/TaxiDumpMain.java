@@ -120,8 +120,6 @@ public class TaxiDumpMain extends BaseTest<TaxiReceiptParser, TaxiReceiptResult>
 	}
 
 	private void run(Path outDir) throws IOException {
-		nu.pattern.OpenCV.loadLocally();
-
 		String detModel = "models/ppocr-v6/" + TIER + "/det.onnx";
 		String recModel = "models/ppocr-v6/" + TIER + "/rec.onnx";
 		String dict = "models/ppocr-v6/" + TIER + "/dict.txt";

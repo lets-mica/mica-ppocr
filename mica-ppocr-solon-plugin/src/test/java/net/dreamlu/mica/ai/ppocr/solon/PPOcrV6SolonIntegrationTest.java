@@ -144,6 +144,37 @@ class PPOcrV6SolonIntegrationTest {
 	}
 
 	/**
+	 * 端到端：<b>预热失败不得让容器启动失败</b>。
+	 *
+	 * <p>失败注入：用 {@code doc_ori} 模型冒充 rec 模型 —— ONNX Session 能正常创建，
+	 * 但预热推理时 rec 的输入 shape（3×48×W）与之不匹配 ⇒ 预热必然失败。
+	 * 预热是「尽力而为」的优化手段，失败只记 WARN，引擎照常可用、容器照常启动。
+	 */
+	@Test
+	void shouldStartEvenWhenWarmUpFails() throws Throwable {
+		Path modelDir = tinyModelDir();
+		Path docOri = repositoryRoot().resolve("models/ppocr-v6/doc_ori/doc_ori.onnx");
+		Assumptions.assumeTrue(modelDir != null, "tiny 模型缺失，跳过集成测试");
+		Assumptions.assumeTrue(Files.isRegularFile(docOri), "doc_ori 模型缺失，跳过集成测试");
+
+		SimpleSolonApp app = new SimpleSolonApp(PPOcrV6SolonIntegrationTest.class);
+		app.cfg().put("mica.ai.ppocr.det-model-path", modelDir.resolve("det.onnx").toString());
+		// 故意用 doc_ori 冒充 rec：Session 可建，但推理 shape 不匹配 ⇒ 预热必失败
+		app.cfg().put("mica.ai.ppocr.rec-model-path", docOri.toString());
+		app.cfg().put("mica.ai.ppocr.rec-char-dict-path", modelDir.resolve("dict.txt").toString());
+		try {
+			app.start(null);
+
+			PPOcrV6Engine engine = app.context().getBean(PPOcrV6Engine.class);
+			assertNotNull(engine, "PPOcrV6Engine bean 应由插件自动装配");
+			assertFalse(engine.isClosed(), "预热失败不应关闭引擎");
+		} finally {
+			closeEngine(app);
+			app.stop();
+		}
+	}
+
+	/**
 	 * Solon 容器不负责关闭 {@link PPOcrV6Engine} 的 ONNX 会话，
 	 * 测试结束后显式关闭，避免 native 资源泄漏。
 	 */

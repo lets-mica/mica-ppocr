@@ -90,7 +90,6 @@ class TaxiReceiptIntegrationTest {
 			.recCharDictPath(modelDir.resolve("dict.txt").toString())
 			.build();
 
-		nu.pattern.OpenCV.loadLocally();
 		try (PPOcrV6Engine engine = new PPOcrV6Engine(config)) {
 			TaxiReceiptParser parser = new TaxiReceiptParser(engine);
 			Path[] samples = Files.list(sampleDir)

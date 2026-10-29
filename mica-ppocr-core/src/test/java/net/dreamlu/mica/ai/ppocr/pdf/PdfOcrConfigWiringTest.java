@@ -216,7 +216,6 @@ class PdfOcrConfigWiringTest {
 	}
 
 	private static PPOcrV6Engine newEngine(Path modelDir, PdfOcrConfig pdfOcrConfig) {
-		nu.pattern.OpenCV.loadLocally();
 		PPOcrV6Config config = PPOcrV6Config.builder()
 			.detModelPath(modelDir.resolve("det.onnx").toString())
 			.recModelPath(modelDir.resolve("rec.onnx").toString())

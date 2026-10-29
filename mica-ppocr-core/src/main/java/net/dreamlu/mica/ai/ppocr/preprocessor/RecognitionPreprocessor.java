@@ -196,7 +196,6 @@ public final class RecognitionPreprocessor {
 	 * @param maxW     batch 内统一宽（padding 目标）
 	 */
 	private void writeNormalizedChw(Mat src, float[] data, int destBase, int h, int actualW, int maxW) {
-		int c0 = destBase;
 		int c1 = destBase + h * maxW;
 		int c2 = destBase + 2 * h * maxW;
 		Mat m = src.isContinuous() ? src : src.clone();
@@ -207,7 +206,7 @@ public final class RecognitionPreprocessor {
 				int rowOff = r * maxW;
 				for (int col = 0; col < actualW; col++) {
 					int b = col * CHANNELS;
-					data[c0 + rowOff + col] = (rowBuf[b] & 0xFF) / 127.5f - 1.0f;
+					data[destBase + rowOff + col] = (rowBuf[b] & 0xFF) / 127.5f - 1.0f;
 					data[c1 + rowOff + col] = (rowBuf[b + 1] & 0xFF) / 127.5f - 1.0f;
 					data[c2 + rowOff + col] = (rowBuf[b + 2] & 0xFF) / 127.5f - 1.0f;
 				}

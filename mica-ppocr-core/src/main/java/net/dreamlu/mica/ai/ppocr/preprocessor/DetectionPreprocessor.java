@@ -225,7 +225,6 @@ public final class DetectionPreprocessor {
 	 * BufferedImageUtils.toBgrMat 均产出 CV_8UC3），此分支仅为完整性保留。
 	 */
 	private void normalizeToChwGeneric(Mat src, float[] chw, int h, int w, int c, int hw, byte[] rowBuf) {
-		float scale = SCALE;
 		for (int r = 0; r < h; r++) {
 			src.get(r, 0, rowBuf);
 			int rowBase = r * w;
@@ -235,7 +234,7 @@ public final class DetectionPreprocessor {
 				for (int ch = 0; ch < c; ch++) {
 					float mean = ch < MEAN.val.length ? (float) MEAN.val[ch] : (float) MEAN.val[MEAN.val.length - 1];
 					float std = ch < STD.val.length ? (float) STD.val[ch] : (float) STD.val[STD.val.length - 1];
-					chw[ch * hw + i] = ((rowBuf[b + ch] & 0xFF) * scale - mean) / std;
+					chw[ch * hw + i] = ((rowBuf[b + ch] & 0xFF) * SCALE - mean) / std;
 				}
 			}
 		}

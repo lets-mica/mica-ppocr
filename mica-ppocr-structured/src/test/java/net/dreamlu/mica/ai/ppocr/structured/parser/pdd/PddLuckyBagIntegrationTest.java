@@ -91,7 +91,6 @@ class PddLuckyBagIntegrationTest {
 			.recCharDictPath(modelDir.resolve("dict.txt").toString())
 			.build();
 
-		nu.pattern.OpenCV.loadLocally();
 		Path[] samples;
 		try (Stream<Path> stream = Files.list(sampleDir)) {
 			samples = stream

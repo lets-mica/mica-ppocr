@@ -76,6 +76,7 @@ public class OcrMain {
 		String tier = args.length >= 3 ? args[2] : DEFAULT_TIER;
 
 		// openpnp OpenCV 本地库加载（首次调用幂等）
+		// 本 demo 在构造引擎之前就直接用 Imgcodecs.imread 读图，引擎的构造期自动加载管不到这里
 		OpenCV.loadLocally();
 
 		System.out.println("=== PP-OCRv6 Demo ===");

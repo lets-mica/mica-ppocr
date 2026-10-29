@@ -16,7 +16,6 @@
 
 package net.dreamlu.mica.ai.ppocr.utils;
 
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -25,11 +24,6 @@ import static org.junit.jupiter.api.Assertions.*;
  * Offset（多边形偏移）单元测试。
  */
 class OffsetTest {
-
-	@BeforeAll
-	static void loadOpenCV() {
-		nu.pattern.OpenCV.loadLocally();
-	}
 
 	@Test
 	void area_square() {

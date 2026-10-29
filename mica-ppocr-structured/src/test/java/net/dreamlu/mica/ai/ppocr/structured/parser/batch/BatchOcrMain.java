@@ -165,9 +165,6 @@ public final class BatchOcrMain {
 			return;
 		}
 
-		// 加载 OpenCV 原生库
-		nu.pattern.OpenCV.loadLocally();
-
 		System.out.println("Batch OCR start");
 		System.out.println("  Parser:    " + spec.displayName() + " (key=" + spec.key() + ")");
 		System.out.println("  Tier:      " + TIER);

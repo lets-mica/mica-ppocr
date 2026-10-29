@@ -42,6 +42,10 @@ class PPOcrV6EngineResourceTest {
 	private static final Path PROC_FD_DIR = CollUtil.pathOf("/proc/self/fd");
 	private static final long MAX_FD_DELTA = 2L; // allow tiny /proc fd stream jitter during counting
 
+	/**
+	 * 本测试在构造引擎<b>之前</b>就用 {@code Imgcodecs.imread} 直接读图，
+	 * 引擎的构造期自动加载管不到这里，需自行加载 native 库。
+	 */
 	@BeforeAll
 	static void loadOpenCv() {
 		nu.pattern.OpenCV.loadLocally();

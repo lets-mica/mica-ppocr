@@ -18,6 +18,7 @@ package net.dreamlu.mica.ai.ppocr.preprocessor;
 
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -38,6 +39,15 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class RecognitionPreprocessorTest {
 
+	/**
+	 * 本测试直接使用 {@code org.opencv.*}（不经过 {@code PPOcrV6Engine}），
+	 * 引擎的构造期自动加载管不到这里，需自行加载 native 库。
+	 */
+	@BeforeAll
+	static void loadOpenCv() {
+		nu.pattern.OpenCV.loadLocally();
+	}
+
 	@Test
 	void constructor_defaults() {
 		RecognitionPreprocessor pre = new RecognitionPreprocessor();
@@ -56,7 +66,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_rejectsNonBgrMat() {
-		nu.pattern.OpenCV.loadLocally();
 		RecognitionPreprocessor pre = new RecognitionPreprocessor();
 
 		// 1 通道（灰度）：行缓冲比一行长 → 跨行读；旧实现越界崩溃，新实现必须显式拒绝
@@ -96,7 +105,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_emptyList() {
-		nu.pattern.OpenCV.loadLocally();
 		RecognitionPreprocessor pre = new RecognitionPreprocessor();
 		RecognitionPreprocessor.Result r = pre.call(CollUtil.listOf());
 		assertEquals(0, r.data().length);
@@ -199,7 +207,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_bitExact_mixedWidths() {
-		nu.pattern.OpenCV.loadLocally();
 		// 宽度各异，触发不同的 targetW / actualW（含 actualW < targetW 的 padding 场景）
 		int[][] sizes = {{48, 48}, {48, 120}, {30, 400}, {64, 64}, {48, 200}};
 		List<Mat> imgs = new ArrayList<>();
@@ -227,7 +234,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_bitExact_afterResize() {
-		nu.pattern.OpenCV.loadLocally();
 		// 大图：srcW/srcH 远大于 wMin/h，走 resize 分支
 		Mat img = randomBgr(80, 600, 4242L);
 		List<Mat> imgs = new ArrayList<>();
@@ -247,7 +253,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_wMaxClamp_bitExact() {
-		nu.pattern.OpenCV.loadLocally();
 		// 超宽图：targetW = 48 * (5000/48) = 5000 > wMax=3200 → 走 wMax 截断分支
 		Mat img = randomBgr(48, 5000, 777L);
 		List<Mat> imgs = new ArrayList<>();
@@ -268,7 +273,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_nonContinuousMat_readsCorrectly() {
-		nu.pattern.OpenCV.loadLocally();
 		int h = 48;
 		int w = 96;
 		Mat base = randomBgr(h, w, 31337L);
@@ -293,7 +297,6 @@ class RecognitionPreprocessorTest {
 
 	@Test
 	void call_paddingRegionIsZero() {
-		nu.pattern.OpenCV.loadLocally();
 		// srcW=srcH=48：targetW=320（wMin 下限），actualW=48 → 右侧 272 列应为 padding 0
 		Mat img = randomBgr(48, 48, 99L);
 		List<Mat> imgs = new ArrayList<>();

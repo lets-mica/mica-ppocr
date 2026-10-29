@@ -52,8 +52,6 @@ public class InvoiceDumpMain {
 		Files.createDirectories(outDir);
 		System.out.println("OCR JSON 输出目录: " + outDir.toAbsolutePath());
 
-		nu.pattern.OpenCV.loadLocally();
-
 		PPOcrV6Config config = PPOcrV6Config.builder()
 			.detModelPath("models/ppocr-v6/tiny/det.onnx")
 			.recModelPath("models/ppocr-v6/tiny/rec.onnx")

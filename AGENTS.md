@@ -70,8 +70,7 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       ├── PPOCRPropertiesCustomizer.java
 │       ├── PdfAutoConfiguration.java
 │       ├── StructuredParserAutoConfiguration.java
-│       ├── PPOcrTemplate.java
-│       └── OpenCVNativeLoader.java
+│       └── PPOcrTemplate.java
 └── mica-ppocr-spring-boot-starter/  ← Spring Boot 自动配置
     └── src/main/java/net/dreamlu/mica/ai/ppocr/autoconfigure/
         ├── PPOCRAutoConfiguration.java
@@ -79,8 +78,7 @@ mica-ppocr/                     ← parent pom (packaging=pom)
         ├── PPOCRPropertiesCustomizer.java
         ├── PdfAutoConfiguration.java      ← 把 mica.ai.ppocr.pdf.* 绑定为 PdfOcrConfig
         ├── StructuredParserAutoConfiguration.java  ← 注册 10 个内置解析器 + PPOcrTemplate
-        ├── PPOcrTemplate.java             ← 解析器模板（10 个 getter + run 重载）
-        └── OpenCVNativeLoader.java
+        └── PPOcrTemplate.java             ← 解析器模板（10 个 getter + run 重载）
 ```
 
 ## Commands
@@ -213,6 +211,115 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   ——PDF 解析或流读取失败时引擎内部包为 `UncheckedIOException` 抛出，调用方免 try-catch。
   （`parse(...)` 一站式结构化方法在 `mica-ppocr-structured` 的 `BaseStructuredParser` 上，引擎本身没有 `parse`。）
 
+- **OpenCV 原生库加载（引擎独占，红线）** — `PPOcrV6Engine` 构造期调用
+  `nu.pattern.OpenCV.loadLocally()`（`ensureOpenCvLoaded()`），Starter / Plugin **不再有**
+  `OpenCVNativeLoader`：
+  - **为什么**：openpnp 的 OpenCV 不会随 JVM 启动自动加载 native 库，缺一次 `loadLocally()`
+    就会在首次 `Imgproc.xxx` / `Core.xxx` 调用时抛 `UnsatisfiedLinkError`。
+    让 starter / plugin / 业务代码各自记住调一次，是「谁忘了谁炸」陷阱，
+    且故障被推迟到**首个推理请求**才暴露。改由引擎构造期加载 ⇒ **构造成功 ⇒ 推理不会撞 native 缺失**。
+  - **加载失败 fail fast**：构造期直接抛 `IllegalStateException`（保留原始 cause）。
+    注意必须 `catch Throwable` —— `UnsatisfiedLinkError` 是 `Error` 不是 `Exception`。
+  - **不要自己写 `if (!loaded)` 标志位**：openpnp 每次都把 native 二进制解压到临时目录后
+    `System.load(path)`，而 `System.load` 按**路径**记账 ⇒ 解压到不同临时路径会重复加载同一份
+    native，造成两份静态状态分裂。openpnp 内部是 holder-class 单例，天然幂等 + 线程安全，
+    直接调 `OpenCV.loadLocally()` 即可。
+  - **副作用**：`mica.ai.ppocr.enabled=false` 时引擎 bean 不存在 ⇒ **OpenCV 也不再加载**，
+    业务方自行使用 `org.opencv.*` 需自己 `loadLocally()`。
+  - **测试侧约定**：测试代码**不要**再无脑加 `OpenCV.loadLocally()` ——
+    只有「**不经引擎**直接用 `org.opencv.*`」的测试才需要自己加载，且应**集中在一个 `@BeforeAll`** 里
+    （如三个预处理单测用 `Mat` / `Imgproc`、demo 与 dump 工具用 `Imgcodecs.imread` / 画框）；
+    **只走引擎**的测试一律不需要 —— 引擎构造时已加载。
+    ⚠️ 判断依据是「用 OpenCV 的时刻**早于**引擎构造」，不是「测试里出现了 org.opencv」。
+
+- **引擎生命周期锁（并发红线，改引擎时必须保留）** — `PPOcrV6Engine` 用一把**公平模式
+  `ReentrantReadWriteLock`** 保护 native 会话的生命周期：
+  - 推理入口（`run(Path/byte[])` / `runMat` / `detectMat` / `recognizeMat`）持**读锁** → 多线程可并发推理，互不阻塞；
+  - `close()` 持**写锁** → 「释放 native ONNX 会话」永远不会与在途推理重叠。
+  - `closed` 字段是 `volatile`（`isClosed()` 不持锁读取，靠它保证跨线程可见性）。
+  - `warmedUp` 字段同理（`isWarmedUp()`），只有预热**成功**才置 true。
+
+  **为什么必须有这把锁**：ORT 的 `OrtSession` 释放后底层 native 句柄被 free。若在
+  `detSession.run(...)` / `recSession.run(...)` 执行期间释放，在途 native 代码会访问已释放内存 ——
+  表现为 **SIGSEGV（JVM 级崩溃，不可捕获）**，或 session 元数据被读成垃圾
+  （实测报 `ORT_INVALID_ARGUMENT - Invalid input name: x`）。单纯的 `volatile boolean closed`
+  只能保证「关闭后不再接受新调用」，**挡不住「关闭与在途调用重叠」**。
+
+  ⇒ **新增推理入口时必须在第一行 `lifecycleReadLock.lock()`**，
+  否则会重新打开这个崩溃窗口。回归测试见
+  `mica-ppocr-core/src/test/java/net/dreamlu/mica/ai/ppocr/engine/PPOcrV6EngineLifecycleTest.java`
+  （用包级 `activeReaderCount()` 精确观测在途状态，不靠 sleep 猜时机）。
+
+  **嵌套取锁是安全的**（JDK 17 实测）：`run(Path/byte[])` 持读锁后内部再调 `runMat(...)` 会**再次**
+  取读锁；即使此时有写锁排队，**重入获取读锁依然成功，不会自死锁**（公平 / 非公平模式均如此）。
+  ⇒ 不要为了「避免嵌套」去重构调用链。
+
+  **close() 的语义：有界等待 + 超时延迟释放**（2026-10-29 改造，取代原「无限阻塞等待」）：
+  - `close()` 最多等 `closeWaitTimeoutMillis`（默认 **1000ms**，包级可见、测试可改）让在途推理自然结束；
+  - **未超时** → 持写锁释放全部 native 会话（干净关闭，与旧版一致）；
+  - **已超时** → 引擎立即「退役」（`closed=true`、新请求被拒），但**不释放** native 会话
+    （在途推理还在用它，强行释放就是 use-after-free ⇒ SIGSEGV）；
+    释放动作延后到在途推理结束后，由守护线程 `ppocr-close-deferred` 完成。
+  - ⇒ 关停不会再被长耗时推理（多页 PDF OCR）拖住，同时**绝不会**出现 native 层崩溃。
+  - 超时后**在途推理可能被中断**（下一个 `requireOpen()` 检查点抛 `IllegalStateException`）——
+    关停场景下属预期行为。
+  - `close()` 幂等由 `closeInitiated`（`AtomicBoolean` CAS）保证：只有第一次调用执行关闭流程。
+
+  ⚠️ **A/B 实测（三条红线都有回归护栏）**：
+  - 把等待改成无限（`tryLock(Long.MAX_VALUE, NANOSECONDS)`）→ 测试红：
+    「close() 不应被在途推理拖住，实际耗时 1325 ms」；
+  - 删掉 `scheduleDeferredSessionRelease()` → 测试红：「native 会话仍未释放（静默泄漏）」
+    （由包级 `isDeferredReleaseCompleted()` 观测点锁住）；
+  - 把超时路径改成「不等就直接释放 native 会话」→ **JVM 直接 SIGSEGV 崩溃**
+    （`hs_err_pid` 里 `Problematic frame: C [onnxruntime.dll+0x60021f]`）——
+    这就是「不能简单不等就释放」的实证依据。
+
+- **`engine/PPOcrV6Engine` 的构造期预热（私有方法 `warmUp()`）** — 用一张**程序化合成的笔画图**
+  （64×64，1 行 2 字位，纯 OpenCV 几何绘制，零字体依赖、不依赖任何真实素材）跑通 det + rec 全链路，
+  触发 ONNX Runtime 的计算图优化、内存池初始化与 JIT 编译，消除「首次推理显著慢于后续」。
+  - **必须用真实笔画而非纯白图**：纯白图 det 检不出框，rec 分支根本不会执行到，
+    等于只预热了一半。测试 `PPOcrV6EngineWarmUpTest` 锁定了这一点。
+  - **不要改用 AWT 文本渲染**：文本依赖系统字体，极简 / 无头容器里可能渲染成空白 ⇒ det 检出 0 框，
+    静默退化成「只预热一半」。几何笔画零字体依赖，各环境表现一致。
+  - **不要放大预热图**：预热成本随图变大而涨，消罚收益却有天花板。实测（tiny 档，福袋码图
+    1200×1500）：320×320/6框 = 成本 188ms / 残留惩罚 17ms；120×120/2框 = 72ms / 44ms；
+    **64×64/1框 = 60ms / 23ms** ⇒ 大图只多消 20ms 却多付 120ms。
+  - **⚠️ 也不能缩小到 30×30**：det 预处理是 `limitType=min, limitSideLen=64`
+    ⇒ **短边 < 64 才放大到 64，短边 ≥ 64 原样进模型**。30×30 靠「被放大」才被检出，
+    det 参数一换成 PaddleOCR 常见的 `limitType=max, limitSideLen=960` 就 **0 框**
+    ⇒ rec 分支不被预热 ⇒ **静默**退化成「只预热 det 一半」，无任何报错。
+    实测两种 det 参数下的检出框数：30×30 = 1 / **0**，60×60 = 1 / 1，64×64 = 1 / 1，120×120 = 2 / 2。
+    ⇒ **取 64×64 = det 的 limit_side_len**：预热图尺寸 = det 实际输入尺寸，零插值、笔画逐像素精确，
+    且不依赖「小图会被放大」这条容易被改掉的实现细节。
+    该约束由 `PPOcrV6EngineWarmUpTest#warmUpImageIsDetectableUnderAnyDetLimitConfig()` 锁住
+    （已 A/B 验证：把图缩到 30×30 测试会红）。
+  - **失败只记 WARN，不影响引擎可用性**（引擎可用性在构造期已校验）；
+    预热是优化手段，不该让应用起不来。
+  - **实测收益量级（别高估）**：独立 JVM 各 9 次采样，CPU EP、tiny 档、福袋码图。
+    首调惩罚是**固定成本**（~110~140ms 的类加载 / JIT / arena 首触），**与图片大小、模型大小基本无关**
+    ⇒ **负载越轻、占比越大**：福袋码图 1200×1500 占 ~20%，2988×2199 大图只占 8%，small 档占 7%。
+    预热（64×64）把首调惩罚从 **113ms 压到 23ms（消掉 80%）**、首调延迟 688→615ms，
+    自身花 60ms ⇒ **「构造→首个结果」基本打平**（中位 907→900ms）。
+    ⇒ 预热的价值是**把 90ms 惩罚从用户请求挪到启动期**，不是净提速；
+    且惩罚是**每 JVM 一次**（同 JVM 内重建引擎已无惩罚，实测首调 1677.9 vs 次调 1720.6）。
+  - **构造期自动预热（私有方法，无开关）**：`PPOcrV6Engine` 构造器在初始化完成后
+    **自动**调用私有的 `warmUp()`，把 ONNX Runtime 的计算图优化、内存池初始化与 JIT
+    提前到初始化期，消除「容器刚起来时第一个请求显著慢于后续」。
+    ⇒ **调用方不需要（也不应当）显式调用**：预热是引擎的<b>初始化语义</b>，不是可选开关。
+    Starter / 插件的 `ppocrV6Engine(...)` Bean 因此只剩「new 一个引擎」这一件事。
+    曾经的 `mica.ai.ppocr.warm-up-on-init` 配置项与公开的 `warmUp()` 方法均已**删除**。
+    ⚠️ 预热成本 tiny ~60ms / small ~88ms（64×64 预热图下实测），却能消掉 ~90ms 的首调惩罚。
+    ⚠️ 注意档位差异：rec 首次运行的成本主要来自「批里 crop 的数量与宽度」而非 session 初始化 ——
+    旧 320×320 预热图（6 个 crop）下 small 档要 ~460ms，64×64（1 个小 crop）只要 ~88ms。
+    ⇒ **不要再加回开关或公开方法**；预热失败只记 WARN，不会让引擎构造失败。
+  - **⚠️ `isWarmedUp()` 是包级可见的测试观测点，不是公开 API**：
+    预热失败只记 WARN、引擎照常可用 ⇒ 该状态几乎恒为 `true`，公开出去信息量低、
+    且容易被误读成「引擎未就绪」；但**必须保留** —— 它是唯一能锁住
+    「构造器确实调用了 `warmUp()`」的断言点。删掉后，构造器里那行预热调用被误删时，
+    **全部测试仍然照常通过**（静默回归）。
+    Starter / 插件侧的容器级断言因此改为「**预热失败不得让容器启动失败**」
+    （用 `doc_ori` 模型冒充 rec 模型制造失败，零新增素材）。
+
 - **`config/PPOcrV6Config`** — `@Getter @Builder` config for all tunables.
 
 - **`engine/PPOcrV6Result`** — Lombok 类（`@Accessors(fluent = true)`，text/score/box/rotatedDegrees），box 为 `int[][]` 四顶点（左上、右上、右下、左下）。
@@ -287,8 +394,9 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `PdfAutoConfiguration` / `StructuredParserAutoConfiguration` 三个配置类**都**受它约束
   （Spring: `@ConditionalOnProperty`；Solon: `@Condition(onExpression = "${mica.ai.ppocr.enabled:true} == true")`），
   关闭时**不注入任何 PP-OCR 功能 Bean**，容器照常启动。
-  （例外：`OpenCVNativeLoader` 不受该开关约束 —— OpenCV 原生库仍会加载，
-  业务方若自行使用 `org.opencv.*` 需知晓这一点；改它会凭空制造 `UnsatisfiedLinkError`。）
+  ⚠️ 关闭时 **OpenCV 原生库也不会加载** —— 它由 `PPOcrV6Engine` 构造期独占加载，
+  引擎 bean 缺席 ⇒ native 不加载。业务方若自行使用 `org.opencv.*`，
+  需自行 `nu.pattern.OpenCV.loadLocally()`（否则 `UnsatisfiedLinkError`）。
   解析器 bean 以 `PPOcrV6Engine` 为构造参数注入 —— 若解析器配置类不受同一开关约束，
   引擎 bean 缺席会导致 `NoSuchBeanDefinitionException` → **容器 refresh 失败**
   （P0-2 回归：Spring 端 `StructuredParserAutoConfiguration` 曾漏掉该闸门）。
@@ -313,7 +421,8 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `pdf.enabled=false` 时 bean 仍存在，但取 `PdfOcrConfig.defaults()`（忽略 yml 的 pdf 参数）；
   `mica.ai.ppocr.enabled=false` 时该 bean **不存在**。
 
-- **`OpenCVNativeLoader`** — `@AutoConfigureBefore` the main config, eagerly loads OpenCV native libs.
+- **OpenCV 原生库加载** — 由 `PPOcrV6Engine` 构造期独占完成（`ensureOpenCvLoaded()`），
+  Starter / Plugin **不再有** `OpenCVNativeLoader`。理由与约束见「core 引擎」一节。
 
 ### mica-ppocr-solon-plugin
 
@@ -322,7 +431,7 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 `@ConditionalOnProperty` / `@ConditionalOnMissingBean`。
 
 - **`PpocrPlugin`**（`integration/` 包）— 插件入口，**显式 `beanMake` 各自动配置类**：
-  `PPOCRProperties` / `OpenCVNativeLoader` / `PPOCRAutoConfiguration` /
+  `PPOCRProperties` / `PPOCRAutoConfiguration` /
   `PdfAutoConfiguration` / `StructuredParserAutoConfiguration`。
 
 ### Porting conventions

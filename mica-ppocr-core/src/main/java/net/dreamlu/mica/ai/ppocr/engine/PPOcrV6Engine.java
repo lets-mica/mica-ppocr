@@ -42,9 +42,13 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.opencv.core.Core;
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfByte;
+import org.opencv.core.Point;
+import org.opencv.core.Scalar;
 import org.opencv.imgcodecs.Imgcodecs;
+import org.opencv.imgproc.Imgproc;
 
 import java.awt.image.BufferedImage;
 import java.io.*;
@@ -56,6 +60,10 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
@@ -81,6 +89,14 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 public final class PPOcrV6Engine implements Closeable {
+	/**
+	 * 关闭时等待在途推理结束的最长时间（毫秒）默认值。
+	 *
+	 * <p>取值理由：单张图片的端到端推理实测 200~800ms，1000ms 足以覆盖绝大多数
+	 * 「关停时恰好有一个请求在途」的场景，从而走「干净关闭」路径（直接释放 native 会话）；
+	 * 超过则进入「延迟释放」路径 —— 关停不再被在途推理拖住。
+	 */
+	private static final long DEFAULT_CLOSE_WAIT_TIMEOUT_MS = 1000L;
 	/**
 	 * ONNX Runtime 全局环境，进程内单例。
 	 */
@@ -161,20 +177,97 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * PDF 双通道配置（构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取，
 	 * 为 null 时回落 {@link PdfOcrConfig#defaults()}）。
-	 * -- GETTER --
-	 *  返回生效中的 PDF 双通道配置。
-	 *  <p>即构造期从
-	 *  取到的值；
-	 *  未显式配置时为
-	 * 。
+	 *
+	 * <p>返回生效中的 PDF 双通道配置，即构造期从
+	 * {@link PPOcrV6Config#getPdfOcrConfig()} 取到的值；
+	 * 未显式配置时为 {@link PdfOcrConfig#defaults()}。
 	 */
 	@Getter
 	private final PdfOcrConfig pdfOcrConfig;
-
+	/**
+	 * 生命周期读写锁。
+	 *
+	 * <p>推理入口持<b>读锁</b>（多线程可并发推理，互不阻塞）；{@link #close()} 持<b>写锁</b>，
+	 * 从而保证「释放 native ONNX 会话」这一动作不会与在途推理并发发生。
+	 *
+	 * <p>为什么必须有这把锁：ONNX Runtime 的 {@code OrtSession} 释放后会释放底层 native
+	 * 句柄。若在 {@code detSession.run(...)} / {@code recSession.run(...)} 执行期间释放，
+	 * 在途 native 代码会访问已释放内存，表现为 <b>SIGSEGV（JVM 级崩溃，不可捕获）</b>，
+	 * 而不是可处理的 Java 异常。单纯的 {@code volatile boolean closed} 标志只能保证
+	 * 「关闭后不再接受新调用」，无法阻止「关闭与在途调用重叠」。
+	 *
+	 * <p>采用<b>公平模式</b>：保证 {@code close()} 不会被源源不断的推理请求饿死，
+	 * 关闭语义可预期。
+	 */
+	private final ReentrantReadWriteLock lifecycleLock = new ReentrantReadWriteLock(true);
+	/**
+	 * 生命周期读锁（推理路径持有）。
+	 */
+	private final Lock lifecycleReadLock = lifecycleLock.readLock();
+	/**
+	 * 生命周期写锁（{@link #close()} 持有）。
+	 */
+	private final Lock lifecycleWriteLock = lifecycleLock.writeLock();
 	/**
 	 * 引擎是否已关闭，{@link #close()} 幂等保护。
+	 *
+	 * <p>用 {@code volatile} 保证跨线程可见性：{@link #isClosed()} 在不持锁的情况下读取，
+	 * 必须能看到其它线程写入的 {@code true}。
 	 */
-	private boolean closed = false;
+	@Getter
+	private volatile boolean closed = false;
+	/**
+	 * 关闭流程是否已被发起（幂等闩锁）。
+	 *
+	 * <p>用 CAS 保证「只有第一次 {@link #close()} 调用执行真正的关闭流程」，
+	 * 后续调用立即返回 —— 即使第一次还在等待在途推理。
+	 */
+	private final AtomicBoolean closeInitiated = new AtomicBoolean(false);
+	/**
+	 * 关闭时等待在途推理结束的最长时间（毫秒）。
+	 *
+	 * <p><b>包级可见且可变，仅供测试缩短，不属于公开 API。</b>
+	 *
+	 * <p>默认 1000ms：足以覆盖「单张图片推理」这类常见在途耗时（实测 200~800ms），
+	 * 又不会让关停被长耗时任务（多页 PDF OCR）拖住。
+	 */
+	volatile long closeWaitTimeoutMillis = DEFAULT_CLOSE_WAIT_TIMEOUT_MS;
+	/**
+	 * 「延迟释放」是否已完成。
+	 *
+	 * <p>{@link #close()} 走超时路径时，native 会话由守护线程在在途推理结束后释放；
+	 * 本标志在释放完成后置 true。
+	 *
+	 * <p><b>包级可见，仅供测试观测，不属于公开 API。</b>
+	 *
+	 * <p>存在的意义：若有人误删了延迟释放逻辑（只「跳过释放」而不补释放），
+	 * native 内存会一直泄漏到进程退出 —— 这是<b>静默回归</b>，没有任何报错。
+	 * 有这个标志，测试就能断言「延迟释放确实发生了」。
+	 */
+	private volatile boolean deferredReleaseCompleted = false;
+	/**
+	 * 引擎是否已完成预热。
+	 *
+	 * <p>只有 {@link #warmUp()} <b>成功</b>跑完 det + rec 全链路才置 true；
+	 * 预热失败保持 false。用 {@code volatile} 保证跨线程可见性。
+	 */
+	private volatile boolean warmedUp = false;
+
+	/**
+	 * 预热是否成功。
+	 *
+	 * <p><b>包级可见，仅供测试观测，不属于公开 API。</b>
+	 *
+	 * <p>为什么不做成公开 getter：预热失败只记 WARN、引擎照常可用，
+	 * 该状态几乎恒为 {@code true}，公开出去信息量低，且容易被误读成「引擎未就绪」。
+	 * 但它必须保留 —— 这是唯一能锁住「构造器确实调用了 {@link #warmUp()}」的断言点：
+	 * 一旦删掉，构造器里那行预热调用被误删时，测试会全部照常通过（静默回归）。
+	 *
+	 * @return 预热成功返回 true
+	 */
+	boolean isWarmedUp() {
+		return warmedUp;
+	}
 
 	/**
 	 * 创建 PP-OCRv6 推理引擎。
@@ -182,6 +275,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>构造过程：
 	 * <ol>
 	 *     <li>校验配置（模型路径非空、recBatchSize ≥ 1、recImageShape 长度=3、doc_ori 配置自洽）</li>
+	 *     <li>加载 OpenCV 原生库（{@link #ensureOpenCvLoaded()}，引擎的硬依赖）</li>
 	 *     <li>按 {@link OrtProviders} 选择 EP 并填充 {@link OrtSession.SessionOptions}</li>
 	 *     <li>创建 det / rec / (可选) doc_ori 三个 ONNX 会话</li>
 	 *     <li>读取每个会话的输入输出名，构造预处理与后处理实例</li>
@@ -192,6 +286,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param config 配置参数（不可为 null）
 	 * @throws IllegalArgumentException 配置不合法（路径为空、批次/形状非法、doc_ori 配置未自洽）
+	 * @throws IllegalStateException    OpenCV 原生库加载失败（引擎无 OpenCV 不可用，构造期即失败）
 	 * @throws RuntimeException         创建 ONNX 会话失败
 	 */
 	public PPOcrV6Engine(PPOcrV6Config config) {
@@ -214,6 +309,9 @@ public final class PPOcrV6Engine implements Closeable {
 			}
 			requirePath(config.getDocOrientationModelPath(), "docOrientationModelPath");
 		}
+		// OpenCV 原生库是引擎的硬依赖（预处理 / DB 后处理 / 裁剪全部走 org.opencv.*），
+		// 在此加载，保证「构造成功 ⇒ 后续推理不会撞 UnsatisfiedLinkError」。
+		ensureOpenCvLoaded();
 		this.env = OrtEnvironment.getEnvironment(OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR);
 
 		OrtSession detSess = null;
@@ -269,6 +367,46 @@ public final class PPOcrV6Engine implements Closeable {
 
 		log.info("PPOcrV6Engine 初始化完成: det={}, rec={}, vocab={}, docOri={}",
 			this.detPre, this.recPre, this.recPost.vocabSize(), docOriEnabled ? "enabled" : "disabled");
+
+		// 预热：把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到构造期，
+		// 消除「容器刚起来时第一个请求显著慢于后续」。
+		// 失败只记 WARN，不影响引擎可用性（模型 / native / session 已在上面校验过）。
+		// 预热：把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到构造期，
+		// 消除「容器刚起来时第一个请求显著慢于后续」。
+		// 失败只记 WARN，不影响引擎可用性（模型 / native / session 已在上面校验过）。
+		warmUp();
+	}
+
+	/**
+	 * 加载 OpenCV 原生库（openpnp 的 {@code nu.pattern.OpenCV}）。
+	 *
+	 * <p><b>为什么在引擎构造期加载</b>：openpnp 的 OpenCV 不会随 JVM 启动自动加载 native 库，
+	 * 首次调用 {@code Imgproc.xxx} / {@code Core.xxx} 等 native 方法时会抛
+	 * {@link UnsatisfiedLinkError}。把这些加载逻辑交给调用方（starter / plugin / 业务代码）
+	 * 各自记住，是典型的「谁忘了谁炸」陷阱 —— 故障会推迟到<b>首个推理请求</b>才暴露。
+	 * 由引擎在构造期独占加载，可保证「构造成功 ⇒ 推理不会撞 UnsatisfiedLinkError」。
+	 *
+	 * <p><b>为什么能重复调用</b>：openpnp 内部用 holder-class 单例实现（{@code OpenCV$LocalLoader$Holder}
+	 * 的静态字段），JVM 类初始化语义保证 {@code System.load} 只执行一次 ⇒
+	 * <b>幂等且线程安全</b>，多处调用 / 多线程并发调用都安全。
+	 *
+	 * <p><b>注意</b>：不要自己实现「if (!loaded) load()」的标志位 —— openpnp 每次都会把 native
+	 * 二进制解压到临时目录后 {@code System.load(path)}，而 {@code System.load} 按<b>路径</b>记账，
+	 * 解压到不同临时路径会重复加载同一份 native，造成两份静态状态分裂。
+	 * 直接调 {@code OpenCV.loadLocally()} 即可。
+	 *
+	 * <p><b>失败即失败</b>：引擎没有 OpenCV 根本不可用，因此这里 fail fast，
+	 * 构造期直接抛出（而不是等到首个请求）。异常类型用 {@link IllegalStateException}，
+	 * 并保留原始 cause（含平台不支持 / 解压失败等细节）。
+	 */
+	private static void ensureOpenCvLoaded() {
+		try {
+			OpenCV.loadLocally();
+		} catch (Throwable t) {
+			// 必须 catch Throwable：UnsatisfiedLinkError 是 Error 而非 Exception，
+			// 只 catch Exception 会让它原样穿透，调用方拿不到可读的失败原因。
+			throw new IllegalStateException("OpenCV 原生库加载失败，PP-OCR 引擎不可用: " + t.getMessage(), t);
+		}
 	}
 
 	/**
@@ -364,15 +502,232 @@ public final class PPOcrV6Engine implements Closeable {
 	/**
 	 * 关闭引擎并释放所有 ONNX 会话。
 	 *
-	 * <p>幂等：多次调用只有第一次会真正关闭会话。释放失败仅在 debug 级别记录，不上抛。
+	 * <p>幂等：多次调用只有第一次会真正执行关闭流程，后续调用立即返回
+	 * （即使第一次还在等待在途推理结束）。
+	 *
+	 * <p><b>并发语义：有界等待 + 超时延迟释放</b>。
+	 * 本方法最多等待 {@link #closeWaitTimeoutMillis}（默认 1 秒）让在途推理自然结束：
+	 *
+	 * <ul>
+	 *   <li><b>未超时</b>：持生命周期<b>写锁</b>释放全部 native 会话。
+	 *       「释放 native 句柄」永远不会与在途推理重叠。</li>
+	 *   <li><b>已超时</b>：引擎立即「退役」—— {@link #isClosed()} 变为 true、新请求被拒，
+	 *       但<b>不释放</b> native 会话（在途推理还在用它，强行释放就是 use-after-free），
+	 *       释放动作延后到在途推理结束后由守护线程完成。
+	 *       ⇒ 关停不会被长耗时推理（多页 PDF OCR）拖住。</li>
+	 * </ul>
+	 *
+	 * <p><b>为什么不能「不等就直接释放」</b>：ONNX Runtime 的 {@code OrtSession} 释放后，
+	 * 底层 native 句柄被 free；在途 native 代码访问已释放内存 ⇒ <b>SIGSEGV（JVM 级崩溃，
+	 * 不可捕获）</b>，而不是可处理的 Java 异常。有界等待 + 延迟释放是
+	 * 「不拖关停」与「不崩」的兼容解。
+	 *
+	 * <p><b>超时后可能发生什么</b>：在途推理在下一个「引擎状态检查点」会收到
+	 * {@link IllegalStateException}（引擎已关闭）而中断 —— 关停场景下属预期行为。
 	 */
 	@Override
 	public void close() {
-		if (!closed) {
-			closeSessions(e -> log.debug("关闭 session 失败: {}", e.getMessage()));
-			closed = true;
-			log.info("PPOcrV6Engine 已关闭");
+		if (!closeInitiated.compareAndSet(false, true)) {
+			// 幂等：只有第一次调用执行真正的关闭流程
+			return;
 		}
+		boolean acquired;
+		try {
+			acquired = lifecycleWriteLock.tryLock(closeWaitTimeoutMillis, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			acquired = false;
+		}
+		if (!acquired) {
+			// 超时：引擎立即退役，但【不】释放 native 会话 ——
+			// 在途推理还在用它，强行释放就是 use-after-free ⇒ SIGSEGV。
+			// 释放动作延后到在途推理结束后由守护线程完成。
+			closed = true;
+			scheduleDeferredSessionRelease();
+			log.warn("PPOcrV6Engine 关闭等待超时（仍有 {} 个推理在途），"
+				+ "native 会话将在在途推理结束后由守护线程释放", activeReaderCount());
+			return;
+		}
+		try {
+			// 先置关闭标记再释放会话：万一会话释放失败，引擎也处于「已退役」状态，
+			// 不会有新请求摸到半死不活的 native 会话。
+			closed = true;
+			closeSessions(e -> log.debug("关闭 session 失败: {}", e.getMessage()));
+			log.info("PPOcrV6Engine 已关闭");
+		} finally {
+			lifecycleWriteLock.unlock();
+		}
+	}
+
+	/**
+	 * 安排在「在途推理全部结束」后释放 native 会话。
+	 *
+	 * <p>由 {@link #close()} 的超时路径调用：此时写锁没能拿到（还有推理在途），
+	 * <b>绝不能</b>在此刻释放 native 会话。本方法起一个<b>守护线程</b>阻塞等待写锁，
+	 * 等在途推理自然结束后再释放 —— 既不崩，也不泄漏（进程存活时一定会释放；
+	 * 进程退出时由 OS 回收）。
+	 *
+	 * <p>守护线程：JVM 退出时不会因它而挂起。
+	 */
+	private void scheduleDeferredSessionRelease() {
+		Thread thread = new Thread(() -> {
+			lifecycleWriteLock.lock();
+			try {
+				closeSessions(e -> log.debug("关闭 session 失败: {}", e.getMessage()));
+				deferredReleaseCompleted = true;
+				log.info("PPOcrV6Engine native 会话已在在途推理结束后释放");
+			} catch (Throwable e) {
+				log.warn("延迟释放 native 会话失败: {}", e.toString());
+			} finally {
+				lifecycleWriteLock.unlock();
+			}
+		}, "mica-ppocr-close-deferred");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	/**
+	 * 预热：用一张合成小图跑通「检测 → 识别」全链路，触发 ONNX Runtime 的计算图优化、
+	 * 内存池初始化与 JIT 编译。
+	 *
+	 * <p><b>由构造器自动调用</b>，不需要（也不应当）由调用方显式触发 ——
+	 * 预热是引擎的<b>初始化语义</b>，不是可选开关：每个引擎实例都该在「构造完成」时
+	 * 就绪，而不是把首个慢请求留给用户。
+	 *
+	 * <p><b>为什么需要</b>：ONNX Runtime 会在每个 Session 的<b>首次</b>推理时做计算图优化
+	 * （常量折叠、算子融合等）并初始化 arena / 内存池，因此首次推理显著慢于后续。
+	 * 「滚动更新时新实例被首个慢请求打爆」是典型生产事故，构造期预热即可消除。
+	 *
+	 * <p><b>合成图</b>：程序化绘制的几何笔画阵列（纯 OpenCV，零字体依赖）。
+	 * 用真实笔画而非纯白图，保证 det 能检出文本块、rec 能真正进入识别分支 ——
+	 * 纯白图只会预热 det 一半，rec 的首次开销仍在。
+	 *
+	 * <p><b>失败处理</b>：预热失败只记 WARN，<b>不影响引擎正常使用</b>
+	 * （引擎可用性在构造期已校验过）；预热是优化手段，不该让应用起不来。
+	 *
+	 * <p>耗时（独立 JVM 实测）：tiny 约 60ms / small 约 88ms。
+	 */
+	private void warmUp() {
+		lifecycleReadLock.lock();
+		try {
+			requireOpen();
+			Mat warmUpImage = createWarmUpImage();
+			long startNanos = System.nanoTime();
+			try {
+				// 走公开入口，顺带把 doc_ori 分支也预热到。
+				// runMat 内部会再次取读锁 —— 读锁重入安全（见 AGENTS.md「嵌套取锁是安全的」）。
+				runMat(warmUpImage, null);
+				warmedUp = true;
+			} catch (Throwable e) {
+				// 预热是「尽力而为」的优化手段：失败只记 WARN，绝不让应用起不来。
+				// 捕获 Throwable（含 UnsatisfiedLinkError / OutOfMemoryError 等 Error）
+				// 是刻意的 —— 引擎可用性已在构造期校验过，此处不该再抛。
+				log.warn("PPOcrV6Engine 预热失败，不影响引擎正常使用: {}", e.toString());
+			} finally {
+				warmUpImage.release();
+				log.info("PPOcrV6Engine 预热完成，耗时 {} ms", (System.nanoTime() - startNanos) / 1_000_000);
+			}
+		} finally {
+			lifecycleReadLock.unlock();
+		}
+	}
+
+	/**
+	 * 构造预热用的合成图：程序化绘制的「类汉字笔画」阵列。
+	 *
+	 * <p><b>为什么不用纯白图</b>：实测纯白图 det 检出 <b>0 个框</b>
+	 * ⇒ rec 分支根本不会执行到，等于只预热了一半（rec 的图优化 / 内存池仍留在首个真实请求上）。
+	 *
+	 * <p><b>为什么不用 AWT 文本</b>：文本渲染依赖系统字体，极简容器里可能渲染成空白，
+	 * 同样会让 det 检出 0 框。这里改用纯几何笔画（短竖 + 短横）拼出「字」，
+	 * <b>零字体依赖</b>，无头 / 极简环境同样可靠。
+	 *
+	 * <p><b>为什么是 64×64（而不是更小 / 更大）</b>：预热图越大越贵，
+	 * 而「消掉首调惩罚」的收益却有天花板。实测（tiny 档，福袋码图 1200×1500，各 7 次独立 JVM）：
+	 * <table border="1">
+	 *   <caption>预热图规格对照（tiny 档，福袋码图 1200×1500）</caption>
+	 *   <tr><th>预热图</th><th>det 输入</th><th>预热成本</th><th>预热后残留惩罚</th></tr>
+	 *   <tr><td>不预热</td><td>—</td><td>0</td><td>113ms</td></tr>
+	 *   <tr><td>320×320 / 6 框</td><td>320×320</td><td>188ms</td><td>17ms</td></tr>
+	 *   <tr><td>120×120 / 2 框</td><td>128×128</td><td>72ms</td><td>44ms</td></tr>
+	 *   <tr><td><b>64×64 / 1 框</b></td><td><b>64×64</b></td><td><b>60ms</b></td><td><b>23ms</b></td></tr>
+	 * </table>
+	 * 320×320 只多消掉约 20ms 惩罚，却要多付 120ms 成本 ⇒ 对「稳态请求 ≤ 500ms」的快接口，
+	 * 大预热图是净负的；64×64 用 60ms 消掉了 90ms 惩罚（消掉 80%）。
+	 *
+	 * <p><b>为什么正好取 det 的 limit_side_len（64）</b>：det 预处理是
+	 * {@code limitType=min, limitSideLen=64} —— <b>短边 &lt; 64 才放大到 64，短边 ≥ 64 原样进模型</b>。
+	 * 取 64×64 ⇒ 预热图尺寸 = det 实际输入尺寸，<b>零插值、笔画逐像素精确</b>，
+	 * 且不依赖「小图会被放大」这条容易被改掉的实现细节（60×60 虽也落到 64×64，
+	 * 但要靠 1.067 倍放大才凑到，笔画被重采样过）。
+	 *
+	 * <p><b>为什么不能再小（30×30 为什么不行）</b>：30×30 靠「被放大到 64」才能被检出，
+	 * det 参数一换成 PaddleOCR 常见的 {@code limitType=max, limitSideLen=960}，
+	 * 30×30 会原样进模型 ⇒ <b>检出 0 框</b> ⇒ rec 分支不被预热 ⇒ 静默退化成「只预热一半」。
+	 * 实测两种 det 参数下的检出框数：30×30 = 1 / <b>0</b>，60×60 = 1 / 1，
+	 * 64×64 = 1 / 1，120×120 = 2 / 2。
+	 * ⇒ 该约束由
+	 * {@code PPOcrV6EngineWarmUpTest#warmUpImageIsDetectableUnderAnyDetLimitConfig()} 锁住。
+	 *
+	 * <p>只用 OpenCV 绘图，不引入 AWT / 字体依赖。
+	 *
+	 * <p>包级可见，便于测试断言「预热图能被 det 检出」，从而保证 rec 分支确实被预热到。
+	 *
+	 * @return BGR Mat，由调用方负责 release
+	 */
+	static Mat createWarmUpImage() {
+		// OpenCV 原生库已在构造期由 ensureOpenCvLoaded() 加载（幂等），此处无需再加载
+		int width = 64;
+		int height = 64;
+		Mat image = new Mat(height, width, CvType.CV_8UC3, new Scalar(255, 255, 255));
+		// 1 行 2 个「字位」，每个字位 = 一竖一横两笔（实测 det 检出 1 个框）
+		for (int col = 0; col < 2; col++) {
+			int x = 9 + col * 32;
+			int y = 24;
+			Imgproc.rectangle(image, new Point(x, y), new Point(x + 1, y + 15), new Scalar(0, 0, 0), -1);
+			Imgproc.rectangle(image, new Point(x, y + 8), new Point(x + 13, y + 9), new Scalar(0, 0, 0), -1);
+		}
+		return image;
+	}
+
+	/**
+	 * 当前持有生命周期读锁的线程数（即正在进行或即将进行推理的调用数）。
+	 *
+	 * <p>包级可见，<b>仅供测试观察并发语义</b>，不属于公开 API。
+	 * 测试用它精确判断「推理线程是否已经进入引擎内部」，从而避免用 sleep 猜时机。
+	 *
+	 * @return 当前读锁持有者数量
+	 */
+	int activeReaderCount() {
+		return lifecycleLock.getReadLockCount();
+	}
+
+	/**
+	 * 设置关闭时等待在途推理的最长时间（毫秒）。
+	 *
+	 * <p><b>包级可见，仅供测试缩短，不属于公开 API。</b>
+	 *
+	 * <p>测试用它把等待压到毫秒级，从而<b>确定性地</b>覆盖「超时 → 延迟释放」路径，
+	 * 而不必依赖「让推理跑够久」来碰运气。
+	 *
+	 * @param closeWaitTimeoutMillis 等待毫秒数（不可为负）
+	 */
+	void closeWaitTimeoutMillis(long closeWaitTimeoutMillis) {
+		if (closeWaitTimeoutMillis < 0) {
+			throw new IllegalArgumentException("closeWaitTimeoutMillis must be >= 0, got " + closeWaitTimeoutMillis);
+		}
+		this.closeWaitTimeoutMillis = closeWaitTimeoutMillis;
+	}
+
+	/**
+	 * 「延迟释放」是否已完成。
+	 *
+	 * <p>包级可见，仅供测试观测，不属于公开 API。
+	 *
+	 * @return 超时路径下 native 会话已被守护线程释放返回 true；未走超时路径返回 false
+	 */
+	boolean isDeferredReleaseCompleted() {
+		return deferredReleaseCompleted;
 	}
 
 	/**
@@ -522,28 +877,34 @@ public final class PPOcrV6Engine implements Closeable {
 		if (imagePath == null) {
 			throw new IllegalArgumentException("imagePath must not be null");
 		}
-		// 默认 FileSystem：先读头部字节嗅探 PDF，避免 OpenCV 解析 PDF 失败
-		if (imagePath.getFileSystem().equals(FileSystems.getDefault())) {
-			byte[] head;
-			try {
-				head = readHeadBytes(imagePath, 1024 + 8);
-			} catch (IOException ignore) {
-				// 嗅探失败时按图片走（保持向后兼容）
-				head = null;
-			}
-			if (PdfMagicDetector.isPdf(head)) {
+		lifecycleReadLock.lock();
+		try {
+			requireOpen();
+			// 默认 FileSystem：先读头部字节嗅探 PDF，避免 OpenCV 解析 PDF 失败
+			if (imagePath.getFileSystem().equals(FileSystems.getDefault())) {
+				byte[] head;
 				try {
-					return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), pdfOcrConfig, detParams));
-				} catch (IOException e) {
-					throw new UncheckedIOException(e);
+					head = readHeadBytes(imagePath, 1024 + 8);
+				} catch (IOException ignore) {
+					// 嗅探失败时按图片走（保持向后兼容）
+					head = null;
+				}
+				if (PdfMagicDetector.isPdf(head)) {
+					try {
+						return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), pdfOcrConfig, detParams));
+					} catch (IOException e) {
+						throw new UncheckedIOException(e);
+					}
 				}
 			}
-		}
-		Mat mat = loadMat(imagePath);
-		try {
-			return runMat(mat, detParams);
+			Mat mat = loadMat(imagePath);
+			try {
+				return runMat(mat, detParams);
+			} finally {
+				mat.release();
+			}
 		} finally {
-			mat.release();
+			lifecycleReadLock.unlock();
 		}
 	}
 
@@ -585,18 +946,24 @@ public final class PPOcrV6Engine implements Closeable {
 		if (imgBytes == null || imgBytes.length == 0) {
 			throw new IllegalArgumentException("imgBytes must not be empty");
 		}
-		if (PdfMagicDetector.isPdf(imgBytes)) {
-			try {
-				return flattenPdfPages(runPdfBytes(imgBytes, pdfOcrConfig, detParams));
-			} catch (IOException e) {
-				throw new UncheckedIOException(e);
-			}
-		}
-		Mat mat = decodeMat(imgBytes);
+		lifecycleReadLock.lock();
 		try {
-			return runMat(mat, detParams);
+			requireOpen();
+			if (PdfMagicDetector.isPdf(imgBytes)) {
+				try {
+					return flattenPdfPages(runPdfBytes(imgBytes, pdfOcrConfig, detParams));
+				} catch (IOException e) {
+					throw new UncheckedIOException(e);
+				}
+			}
+			Mat mat = decodeMat(imgBytes);
+			try {
+				return runMat(mat, detParams);
+			} finally {
+				mat.release();
+			}
 		} finally {
-			mat.release();
+			lifecycleReadLock.unlock();
 		}
 	}
 
@@ -769,8 +1136,13 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @return boxes 形状 (N, 4, 2) int，scores 长度 N
 	 */
 	public DetectResult detectMat(Mat imgBgr, DbDetParams detParams) {
-		DbPostProcessor post = detParams == null ? detPost : new DbPostProcessor(detParams);
-		return detectMatInternal(imgBgr, post);
+		lifecycleReadLock.lock();
+		try {
+			DbPostProcessor post = detParams == null ? detPost : new DbPostProcessor(detParams);
+			return detectMatInternal(imgBgr, post);
+		} finally {
+			lifecycleReadLock.unlock();
+		}
 	}
 
 	/**
@@ -816,59 +1188,64 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @return texts 与 scores 长度一致
 	 */
 	public RecognizeResult recognizeMat(List<Mat> imgList) {
-		requireOpen();
-		int n = imgList.size();
-		if (n == 0) {
-			return new RecognizeResult(new String[0], new float[0]);
-		}
-		if (log.isDebugEnabled()) {
-			Mat first = imgList.get(0);
-			log.debug("rec 输入 #0: {}x{}x{} type={} (BGR)", first.rows(), first.cols(), first.channels(), first.type());
-		}
-
-		// 按宽高比排序：让 batch 内尺寸相近，padding 浪费最小
-		Integer[] sortedOrder = new Integer[n];
-		double[] ratios = new double[n];
-		for (int i = 0; i < n; i++) {
-			sortedOrder[i] = i;
-			ratios[i] = (double) imgList.get(i).cols() / imgList.get(i).rows();
-		}
-		Arrays.sort(sortedOrder, Comparator.comparingDouble(i -> ratios[i]));
-
-		String[] texts = new String[n];
-		float[] scores = new float[n];
-
-		for (int start = 0; start < n; start += recBatchSize) {
-			int end = Math.min(start + recBatchSize, n);
-			List<Mat> batch = new ArrayList<>(end - start);
-			for (int i = start; i < end; i++) {
-				batch.add(imgList.get(sortedOrder[i]));
+		lifecycleReadLock.lock();
+		try {
+			requireOpen();
+			int n = imgList.size();
+			if (n == 0) {
+				return new RecognizeResult(new String[0], new float[0]);
 			}
-			RecognitionPreprocessor.Result prep = recPre.call(batch);
-			long[] shape = toLongArray(prep.shape());
-			FloatBuffer buf = NdArrayUtils.toBuffer(prep.data());
-			try (
-				OnnxTensor input = OnnxTensor.createTensor(env, buf, shape);
-				OrtSession.Result result = recSession.run(CollUtil.mapOf(recInputName, input))
-			) {
-				OnnxTensor outTensor = (OnnxTensor) result.get(recOutputName).get();
-				long[] outShape = outTensor.getInfo().getShape();
-				int bOut = (int) outShape[0];
-				int tOut = (int) outShape[1];
-				int cOut = (int) outShape[2];
-				float[] flat = new float[bOut * tOut * cOut];
-				outTensor.getFloatBuffer().get(flat);
-				CtcLabelDecoder.Result decoded = recPost.call(flat, bOut, tOut, cOut);
-				for (int j = 0; j < decoded.texts().length; j++) {
-					int orig = sortedOrder[start + j];
-					texts[orig] = decoded.texts()[j];
-					scores[orig] = decoded.scores()[j];
+			if (log.isDebugEnabled()) {
+				Mat first = imgList.get(0);
+				log.debug("rec 输入 #0: {}x{}x{} type={} (BGR)", first.rows(), first.cols(), first.channels(), first.type());
+			}
+
+			// 按宽高比排序：让 batch 内尺寸相近，padding 浪费最小
+			Integer[] sortedOrder = new Integer[n];
+			double[] ratios = new double[n];
+			for (int i = 0; i < n; i++) {
+				sortedOrder[i] = i;
+				ratios[i] = (double) imgList.get(i).cols() / imgList.get(i).rows();
+			}
+			Arrays.sort(sortedOrder, Comparator.comparingDouble(i -> ratios[i]));
+
+			String[] texts = new String[n];
+			float[] scores = new float[n];
+
+			for (int start = 0; start < n; start += recBatchSize) {
+				int end = Math.min(start + recBatchSize, n);
+				List<Mat> batch = new ArrayList<>(end - start);
+				for (int i = start; i < end; i++) {
+					batch.add(imgList.get(sortedOrder[i]));
 				}
-			} catch (OrtException e) {
-				throw new RuntimeException("rec 推理失败: " + e.getMessage(), e);
+				RecognitionPreprocessor.Result prep = recPre.call(batch);
+				long[] shape = toLongArray(prep.shape());
+				FloatBuffer buf = NdArrayUtils.toBuffer(prep.data());
+				try (
+					OnnxTensor input = OnnxTensor.createTensor(env, buf, shape);
+					OrtSession.Result result = recSession.run(CollUtil.mapOf(recInputName, input))
+				) {
+					OnnxTensor outTensor = (OnnxTensor) result.get(recOutputName).get();
+					long[] outShape = outTensor.getInfo().getShape();
+					int bOut = (int) outShape[0];
+					int tOut = (int) outShape[1];
+					int cOut = (int) outShape[2];
+					float[] flat = new float[bOut * tOut * cOut];
+					outTensor.getFloatBuffer().get(flat);
+					CtcLabelDecoder.Result decoded = recPost.call(flat, bOut, tOut, cOut);
+					for (int j = 0; j < decoded.texts().length; j++) {
+						int orig = sortedOrder[start + j];
+						texts[orig] = decoded.texts()[j];
+						scores[orig] = decoded.scores()[j];
+					}
+				} catch (OrtException e) {
+					throw new RuntimeException("rec 推理失败: " + e.getMessage(), e);
+				}
 			}
+			return new RecognizeResult(texts, scores);
+		} finally {
+			lifecycleReadLock.unlock();
 		}
-		return new RecognizeResult(texts, scores);
 	}
 
 	/**
@@ -905,26 +1282,31 @@ public final class PPOcrV6Engine implements Closeable {
 	 * doc_ori 应用到原图的顺时针旋转角度（0/90/180/270）
 	 */
 	public List<PPOcrV6Result> runMat(Mat imgBgr, DbDetParams detParams) {
-		requireOpen();
-		// 文档方向分类（可选）：根据整图方向把图片旋转到正向，再走检测
-		DocOriRotated rotatedInfo = classifyAndRotateDocOrientation(imgBgr);
-		Mat rotated = rotatedInfo.mat();
+		lifecycleReadLock.lock();
 		try {
-			List<PPOcrV6Result> results = runOnMat(rotated, detParams);
-			if (rotatedInfo.degrees() == 0) {
-				return results;
+			requireOpen();
+			// 文档方向分类（可选）：根据整图方向把图片旋转到正向，再走检测
+			DocOriRotated rotatedInfo = classifyAndRotateDocOrientation(imgBgr);
+			Mat rotated = rotatedInfo.mat();
+			try {
+				List<PPOcrV6Result> results = runOnMat(rotated, detParams);
+				if (rotatedInfo.degrees() == 0) {
+					return results;
+				}
+				// 把 doc_ori 应用的旋转角度带到每个 result，便于调用方把 box 投影回原图坐标系
+				int deg = rotatedInfo.degrees();
+				List<PPOcrV6Result> wrapped = new ArrayList<>(results.size());
+				for (PPOcrV6Result r : results) {
+					wrapped.add(new PPOcrV6Result(r.text(), r.score(), r.box(), deg));
+				}
+				return wrapped;
+			} finally {
+				if (rotated != imgBgr) {
+					rotated.release();
+				}
 			}
-			// 把 doc_ori 应用的旋转角度带到每个 result，便于调用方把 box 投影回原图坐标系
-			int deg = rotatedInfo.degrees();
-			List<PPOcrV6Result> wrapped = new ArrayList<>(results.size());
-			for (PPOcrV6Result r : results) {
-				wrapped.add(new PPOcrV6Result(r.text(), r.score(), r.box(), deg));
-			}
-			return wrapped;
 		} finally {
-			if (rotated != imgBgr) {
-				rotated.release();
-			}
+			lifecycleReadLock.unlock();
 		}
 	}
 
@@ -1286,8 +1668,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws IOException 渲染失败
 	 */
 	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config, DbDetParams detParams) throws IOException {
-		// openpnp OpenCV 本地库幂等加载（starter/solon 已被 OpenCVNativeLoader 提前加载，此处为非容器兜底）
-		OpenCV.loadLocally();
+		// OpenCV 原生库已在构造期由 ensureOpenCvLoaded() 加载（幂等），此处无需再加载
 		BufferedImage image = renderer.renderImageWithDPI(pageIndex, config.getRenderDpi(), ImageType.RGB);
 		Mat mat = BufferedImageUtils.toBgrMat(image);
 		List<PPOcrV6Result> results;

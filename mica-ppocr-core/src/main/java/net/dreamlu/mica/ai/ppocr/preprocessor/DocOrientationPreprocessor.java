@@ -230,8 +230,8 @@ public final class DocOrientationPreprocessor {
 					// 注意：BGR → 通道排列为 B/G/R，但 mean/std 仍按 R/G/B 顺序应用
 					// 这是 PaddleX 官方预处理脚本的标准做法（保持 bit-exact 兼容）
 					// 详见：https://github.com/PaddlePaddle/PaddleX/issues/4966
-					chw[hw * 0 + i] = (bgr2 * SCALE - MEAN[0]) / STD[0];  // R
-					chw[hw * 1 + i] = (bgr1 * SCALE - MEAN[1]) / STD[1];  // G
+					chw[i] = (bgr2 * SCALE - MEAN[0]) / STD[0];  // R
+					chw[hw + i] = (bgr1 * SCALE - MEAN[1]) / STD[1];  // G
 					chw[hw * 2 + i] = (bgr0 * SCALE - MEAN[2]) / STD[2];  // B
 				}
 			}
@@ -245,18 +245,25 @@ public final class DocOrientationPreprocessor {
 
 	/**
 	 * 文档方向预处理结果。
-	 *
-	 * @param data  NCHW flat float[] 数据（C=3, H=cropSize, W=cropSize）
-	 * @param shape [N, C, H, W] = [1, 3, 224, 224]
-	 * @param srcH  原始图高
-	 * @param srcW  原始图宽
 	 */
 	@lombok.Value
 	@Accessors(fluent = true)
 	public static class Result {
-		private final float[] data;
-		private final int[] shape;
-		private final int srcH;
-		private final int srcW;
+		/**
+		 * NCHW flat float[] 数据（C=3, H=cropSize, W=cropSize）
+		 */
+		float[] data;
+		/**
+		 * [N, C, H, W] = [1, 3, 224, 224]
+		 */
+		int[] shape;
+		/**
+		 * 原始图高
+		 */
+		int srcH;
+		/**
+		 * 原始图宽
+		 */
+		int srcW;
 	}
 }

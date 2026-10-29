@@ -51,7 +51,6 @@ public class InvoiceMain {
 	private static final String VIS_PATH = "test_images/invoice/vis.png";
 
 	public static void main(String[] args) throws IOException {
-		nu.pattern.OpenCV.loadLocally();
 		PPOcrV6Config config = PPOcrV6Config.builder()
 			.detModelPath("models/ppocr-v6/tiny/det.onnx")
 			.recModelPath("models/ppocr-v6/tiny/rec.onnx")

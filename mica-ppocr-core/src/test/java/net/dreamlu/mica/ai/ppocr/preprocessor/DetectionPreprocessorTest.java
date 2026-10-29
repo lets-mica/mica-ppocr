@@ -17,6 +17,7 @@
 package net.dreamlu.mica.ai.ppocr.preprocessor;
 
 import net.dreamlu.mica.ai.ppocr.utils.NdArrayUtils;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -32,6 +33,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * <p>resize 对齐规则：Math.round(value / 32) * 32，下限 32。
  */
 class DetectionPreprocessorTest {
+
+	/**
+	 * 本测试直接使用 {@code org.opencv.*}（不经过 {@code PPOcrV6Engine}），
+	 * 引擎的构造期自动加载管不到这里，需自行加载 native 库。
+	 */
+	@BeforeAll
+	static void loadOpenCv() {
+		nu.pattern.OpenCV.loadLocally();
+	}
 
 	@Test
 	void computeResizedHW_minLimit_scaleUp() {
@@ -176,7 +186,6 @@ class DetectionPreprocessorTest {
 
 	@Test
 	void call_bitExact_noResize() {
-		nu.pattern.OpenCV.loadLocally();
 		// 固定随机种子，保证可复现
 		Random rnd = new Random(20261025L);
 		// 128×128：min/64 下短边 128 >= 64 → 不缩放；128 又是 32 的整数倍 → 对齐后尺寸不变
@@ -205,7 +214,6 @@ class DetectionPreprocessorTest {
 
 	@Test
 	void call_bitExact_afterResize() {
-		nu.pattern.OpenCV.loadLocally();
 		Random rnd = new Random(42L);
 		int h = 96;
 		int w = 96;
@@ -240,7 +248,6 @@ class DetectionPreprocessorTest {
 
 	@Test
 	void call_nonContinuousMat_readsCorrectly() {
-		nu.pattern.OpenCV.loadLocally();
 		int h = 40;
 		int w = 40;
 		Mat base = new Mat(h, w, CvType.CV_8UC3, new Scalar(7, 9, 11));

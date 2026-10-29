@@ -38,6 +38,10 @@ nbdist/
 ### models ###
 !models/ppocr-v6/medium/*.zip
 
+### test run artifacts ###
+# 多档位回归跑出的可视化产物（带档位后缀），单档的 vis.png 仍是人工留存基线，不忽略
+test_images/**/vis.*.png
+
 ### maven ###
 .flattened-pom.xml
 target/

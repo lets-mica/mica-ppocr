@@ -80,6 +80,12 @@ public class PPOCRAutoConfiguration {
 	/**
 	 * 注册 PP-OCR 推理引擎。
 	 *
+	 * <p>引擎<b>构造期自动预热</b>（{@code PPOcrV6Engine} 构造器内部完成），
+	 * 把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到启动期，
+	 * 消除「滚动更新后首个慢请求打爆新实例」的事故 —— 调用方无需任何额外动作。
+	 *
+	 * <p>预热失败只记 WARN，<b>不影响引擎可用性</b>。
+	 *
 	 * @param ppOcrV6Config PP-OCR 配置
 	 * @return PPOcrV6Engine 实例
 	 */

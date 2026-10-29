@@ -118,8 +118,6 @@ public class HouseholdRegisterDumpMain extends BaseTest<HouseholdRegisterParser,
 	}
 
 	private void run(Path outDir) throws IOException {
-		nu.pattern.OpenCV.loadLocally();
-
 		String detModel = "models/ppocr-v6/" + TIER + "/det.onnx";
 		String recModel = "models/ppocr-v6/" + TIER + "/rec.onnx";
 		String dict = "models/ppocr-v6/" + TIER + "/dict.txt";
