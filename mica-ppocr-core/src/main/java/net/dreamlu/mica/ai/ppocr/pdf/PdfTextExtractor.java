@@ -87,7 +87,7 @@ public class PdfTextExtractor {
 			throw new IllegalArgumentException("doc must not be null");
 		}
 		if (pageIndex < 0 || pageIndex >= doc.getNumberOfPages()) {
-			throw new IndexOutOfBoundsException("pageIndex " + pageIndex + " out of range [0, " + doc.getNumberOfPages() + ")");
+			throw new IndexOutOfBoundsException("pageIndex " + pageIndex + " out of range [0, " + doc.getNumberOfPages() + ')');
 		}
 		LineCollector collector = new LineCollector(pageIndex);
 		collector.getText(doc);

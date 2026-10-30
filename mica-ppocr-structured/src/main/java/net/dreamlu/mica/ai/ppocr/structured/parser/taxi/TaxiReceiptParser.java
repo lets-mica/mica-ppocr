@@ -477,7 +477,7 @@ public class TaxiReceiptParser extends BaseStructuredParser<TaxiReceiptResult> {
 		if (text == null || text.isEmpty()) return null;
 		Matcher range = TIME_RANGE_PATTERN.matcher(text);
 		if (range.find()) {
-			return range.group(1) + "-" + range.group(2);
+			return range.group(1) + '-' + range.group(2);
 		}
 		Matcher m = TIME_PATTERN.matcher(text);
 		return m.find() ? m.group() : null;
@@ -1029,10 +1029,10 @@ public class TaxiReceiptParser extends BaseStructuredParser<TaxiReceiptResult> {
 			y = "20" + y;
 		}
 		if (y.length() != 4) return null;
-		if (mo.length() == 1) mo = "0" + mo;
-		if (d.length() == 1) d = "0" + d;
+		if (mo.length() == 1) mo = '0' + mo;
+		if (d.length() == 1) d = '0' + d;
 		if (mo.length() != 2 || d.length() != 2) return null;
-		return y + "-" + mo + "-" + d;
+		return y + '-' + mo + '-' + d;
 	}
 
 	/**
@@ -1053,12 +1053,12 @@ public class TaxiReceiptParser extends BaseStructuredParser<TaxiReceiptResult> {
 		// 年份补 0
 		if (yearPart.length() == 2) yearPart = "20" + yearPart;
 		// 月日补 0
-		if (monthPart.length() == 1) monthPart = "0" + monthPart;
-		if (dayPart.length() == 1) dayPart = "0" + dayPart;
+		if (monthPart.length() == 1) monthPart = '0' + monthPart;
+		if (dayPart.length() == 1) dayPart = '0' + dayPart;
 		// 校验
 		if (yearPart.length() != 4) return date;
 		if (monthPart.length() != 2 || dayPart.length() != 2) return date;
-		return yearPart + "-" + monthPart + "-" + dayPart;
+		return yearPart + '-' + monthPart + '-' + dayPart;
 	}
 
 	/**

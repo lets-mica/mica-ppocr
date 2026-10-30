@@ -90,7 +90,7 @@ public class OcrMain {
 			System.err.println("Error: cannot read image: " + imagePath);
 			System.exit(1);
 		}
-		System.out.println("Size:   " + img.cols() + "x" + img.rows());
+		System.out.println("Size:   " + img.cols() + 'x' + img.rows());
 
 		// 加载模型
 		String detModel = "models/ppocr-v6/" + tier + "/det.onnx";

@@ -135,7 +135,7 @@ public final class BatchOcrMain {
 		// 解析目录 & 输出路径
 		Path dirPath = CollUtil.pathOf(emptyToDefault(IMAGE_DIR, spec.defaultDir()));
 		// 输出到 项目下的 target 目录
-		Path outputPath = CollUtil.pathOf( "target/batch-ocr-" + spec.key() + "-" + TIER + ".txt");
+		Path outputPath = CollUtil.pathOf( "target/batch-ocr-" + spec.key() + '-' + TIER + ".txt");
 
 		// 列出图片
 		List<Path> images;
@@ -200,7 +200,7 @@ public final class BatchOcrMain {
 
 			for (int i = 0; i < images.size(); i++) {
 				Path imagePath = images.get(i);
-				System.out.println("[" + (i + 1) + "/" + images.size() + "] " + imagePath.getFileName());
+				System.out.println("[" + (i + 1) + '/' + images.size() + "] " + imagePath.getFileName());
 				if (i > 0) {
 					pw.println();
 				}
@@ -286,7 +286,7 @@ public final class BatchOcrMain {
 			writeBanner(pw, null, 80);
 			pw.println("File:        " + imagePath.getFileName());
 			pw.println("Path:        " + imagePath.toAbsolutePath());
-			pw.println("Size:        " + imgW + "x" + imgH);
+			pw.println("Size:        " + imgW + 'x' + imgH);
 			pw.println("Parser:      " + spec.displayName());
 			writeBanner(pw, null, 80);
 			pw.println();
@@ -372,7 +372,7 @@ public final class BatchOcrMain {
 				continue;
 			}
 			if (!t.startsWith(".")) {
-				t = "." + t;
+				t = '.' + t;
 			}
 			set.add(t);
 		}
@@ -397,7 +397,7 @@ public final class BatchOcrMain {
 	 * @return 源文件相对路径
 	 */
 	private static String classNameToSourcePath(String fqn) {
-		return MODULE_SOURCE_ROOT + "/" + fqn.replace('.', '/') + ".java";
+		return MODULE_SOURCE_ROOT + '/' + fqn.replace('.', '/') + ".java";
 	}
 
 	/**

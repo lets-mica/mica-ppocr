@@ -138,9 +138,9 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 		}
 		int dot = visPath.lastIndexOf('.');
 		if (dot < 0) {
-			return visPath + "." + tier;
+			return visPath + '.' + tier;
 		}
-		return visPath.substring(0, dot) + "." + tier + visPath.substring(dot);
+		return visPath.substring(0, dot) + '.' + tier + visPath.substring(dot);
 	}
 
 	/**
@@ -300,7 +300,7 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 		System.out.println("Rec:    " + recModel); // 识别模型
 		System.out.println("Dict:   " + dict);   // 字典文件
 		System.out.println("DocOri: " + docOriModel + " (enabled=" + USE_DOC_ORIENTATION + ")");
-		System.out.println("Size:   " + image.cols() + "x" + image.rows());
+		System.out.println("Size:   " + image.cols() + 'x' + image.rows());
 
 		PPOcrV6Config config = PPOcrV6Config.builder()
 			.detModelPath(detModel)

@@ -767,7 +767,7 @@ public final class PPOcrV6Engine implements Closeable {
 	public String toString() {
 		return "PPOcrV6Engine(det=" + detPre + ", rec=" + recPre
 			+ ", vocab=" + recPost.vocabSize() + ", docOri=" + (docOriEnabled ? "enabled" : "disabled")
-			+ ", closed=" + closed + ")";
+			+ ", closed=" + closed + ')';
 	}
 
 	/**

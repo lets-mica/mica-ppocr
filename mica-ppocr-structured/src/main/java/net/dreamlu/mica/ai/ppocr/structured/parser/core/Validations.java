@@ -289,10 +289,10 @@ public class Validations {
 		}
 		String s = idNumber.trim();
 		if (s.length() == 18) {
-			return s.substring(6, 10) + "-" + s.substring(10, 12) + "-" + s.substring(12, 14);
+			return s.substring(6, 10) + '-' + s.substring(10, 12) + '-' + s.substring(12, 14);
 		}
 		if (s.length() == 15) {
-			return "19" + s.substring(6, 8) + "-" + s.substring(8, 10) + "-" + s.substring(10, 12);
+			return "19" + s.substring(6, 8) + '-' + s.substring(8, 10) + '-' + s.substring(10, 12);
 		}
 		return null;
 	}

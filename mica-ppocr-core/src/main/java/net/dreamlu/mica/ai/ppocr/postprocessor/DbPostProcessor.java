@@ -73,7 +73,7 @@ public final class DbPostProcessor {
 					if (d > 0) sb.append(", ");
 					sb.append(prob.size(d));
 				}
-				sb.append(")");
+				sb.append(')');
 				throw new IllegalArgumentException(sb.toString());
 			}
 

@@ -28,7 +28,8 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredResult;
  * <p>继承 {@link BaseStructuredResult}：
  * <ul>
  *   <li>{@code rawResults} —— 原始 OCR 结果（含所有文字框）</li>
- *   <li>{@code fieldBoxes} —— 字段名 → 对应 OCR 框坐标（key: cardNumber/validDate/holderName/bankName/cardType）</li>
+ *   <li>{@code fieldBoxes} —— 字段名 → 对应 OCR 框坐标（key: cardNumber/validDate/holderName/bankName/cardType）。
+ *       本解析器走文本版标签匹配，<b>不回填</b>该 map（始终为空）；需要坐标请用 {@code rawResults} 自行定位。</li>
  * </ul>
  */
 @Data
