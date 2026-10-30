@@ -24,9 +24,9 @@ import java.util.regex.Pattern;
 /**
  * 单个字段的声明（schema 的一条）。
  *
- * <p>由 {@link ExtractionSchema.FieldBuilder} 构造，不可变。
+ * <p>由 {@link OcrFieldSchema.FieldBuilder} 构造，不可变。
  *
- * @see ExtractionSchema
+ * @see OcrFieldSchema
  */
 public class FieldSpec {
 
@@ -65,9 +65,9 @@ public class FieldSpec {
 	private final List<FieldRule> rules;
 
 	/**
-	 * 值归一化方式；不会为 null（缺省 {@link Normalizer#NONE}）。
+	 * 值归一化方式；不会为 null（缺省 {@link ValueNormalizer#NONE}）。
 	 */
-	private final Normalizer normalizer;
+	private final ValueNormalizer normalizer;
 
 	/**
 	 * 是否为可选字段。
@@ -84,11 +84,11 @@ public class FieldSpec {
 	 * @param labels     标签列表，可为 null
 	 * @param regex      内容正则，可为 null
 	 * @param rules      校验规则列表，可为 null
-	 * @param normalizer 归一化方式，可为 null（按 {@link Normalizer#NONE} 处理）
+	 * @param normalizer 归一化方式，可为 null（按 {@link ValueNormalizer#NONE} 处理）
 	 * @param optional   是否可选字段
 	 */
 	public FieldSpec(String name, List<String> labels, Pattern regex, List<FieldRule> rules,
-					 Normalizer normalizer, boolean optional) {
+					 ValueNormalizer normalizer, boolean optional) {
 		if (name == null || name.isEmpty()) {
 			throw new IllegalArgumentException("field name must not be empty");
 		}
@@ -100,7 +100,7 @@ public class FieldSpec {
 		this.rules = rules == null
 			? Collections.<FieldRule>emptyList()
 			: Collections.unmodifiableList(new ArrayList<>(rules));
-		this.normalizer = normalizer == null ? Normalizer.NONE : normalizer;
+		this.normalizer = normalizer == null ? ValueNormalizer.NONE : normalizer;
 		this.optional = optional;
 	}
 
@@ -145,7 +145,7 @@ public class FieldSpec {
 	 *
 	 * @return 归一化方式，不会为 null
 	 */
-	public Normalizer normalizer() {
+	public ValueNormalizer normalizer() {
 		return normalizer;
 	}
 

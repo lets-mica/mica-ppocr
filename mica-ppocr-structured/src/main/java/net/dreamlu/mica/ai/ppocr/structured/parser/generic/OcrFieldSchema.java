@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * 抽取 schema：用声明描述一张新单据的字段结构。
+ * OCR 字段声明：用 schema 描述一张新单据要抽哪些字段、每个字段怎么取与怎么校验。
  *
  * <p><b>定位</b>：通用解析器的声明式入口。新单据类型<b>不需要</b>再写一个
  * Java 解析器类，只要用 schema 把"字段名 → 标签 / 正则 / 规则"讲清楚即可；
@@ -30,7 +30,7 @@ import java.util.regex.Pattern;
  *
  * <p>典型用法：
  * <pre>
- * ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+ * OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
  *     .field("contractNo")
  *         .labels("合同编号", "合同号")
  *         .compact()
@@ -41,7 +41,7 @@ import java.util.regex.Pattern;
  *         .add()
  *     .build();
  *
- * GenericResult r = new GenericParser(engine, schema).parse(imagePath);
+ * OcrStructuredResult r = new OcrStructuredParser(engine, schema).parse(imagePath);
  * String no = r.getValue("contractNo");
  * </pre>
  *
@@ -51,17 +51,17 @@ import java.util.regex.Pattern;
  * <p><b>取值的四条路径</b>（按优先级）：
  * <ol>
  *   <li>标签定位 —— 在标签右侧找值，并做"值归属最近标签"判定（见
- *       {@link GenericParser}）；</li>
+ *       {@link OcrStructuredParser}）；</li>
  *   <li>标签与值合并在同一框 —— 从合并框里剥出值；</li>
  *   <li>内容正则兜底 —— 标签定位失败，或标签取到的（归一化后）值不符合正则时；</li>
  *   <li>都没命中 —— 字段缺失。</li>
  * </ol>
  * <p>本类不可变，线程安全。
  *
- * @see GenericParser
- * @see GenericResult
+ * @see OcrStructuredParser
+ * @see OcrStructuredResult
  */
-public final class ExtractionSchema {
+public final class OcrFieldSchema {
 
 	/**
 	 * 单据类型名（用于结果标识与日志）。
@@ -79,7 +79,7 @@ public final class ExtractionSchema {
 	 * @param documentType 单据类型名
 	 * @param fields       字段声明列表
 	 */
-	private ExtractionSchema(String documentType, List<FieldSpec> fields) {
+	private OcrFieldSchema(String documentType, List<FieldSpec> fields) {
 		if (documentType == null || documentType.isEmpty()) {
 			throw new IllegalArgumentException("documentType must not be empty");
 		}
@@ -166,9 +166,9 @@ public final class ExtractionSchema {
 		 *
 		 * @return schema
 		 */
-		public ExtractionSchema build() {
+		public OcrFieldSchema build() {
 			flush();
-			return new ExtractionSchema(documentType, fields);
+			return new OcrFieldSchema(documentType, fields);
 		}
 
 		/**
@@ -192,7 +192,7 @@ public final class ExtractionSchema {
 		private final List<String> labels = new ArrayList<>();
 		private Pattern regex;
 		private final List<FieldRule> rules = new ArrayList<>();
-		private Normalizer normalizer = Normalizer.NONE;
+		private ValueNormalizer normalizer = ValueNormalizer.NONE;
 		private boolean optional;
 
 		/**
@@ -261,8 +261,8 @@ public final class ExtractionSchema {
 		 * @param value 归一化方式
 		 * @return 自身
 		 */
-		public FieldBuilder normalize(Normalizer value) {
-			this.normalizer = value == null ? Normalizer.NONE : value;
+		public FieldBuilder normalize(ValueNormalizer value) {
+			this.normalizer = value == null ? ValueNormalizer.NONE : value;
 			return this;
 		}
 
@@ -272,7 +272,7 @@ public final class ExtractionSchema {
 		 * @return 自身
 		 */
 		public FieldBuilder digits() {
-			return normalize(Normalizer.DIGITS);
+			return normalize(ValueNormalizer.DIGITS);
 		}
 
 		/**
@@ -281,7 +281,7 @@ public final class ExtractionSchema {
 		 * @return 自身
 		 */
 		public FieldBuilder compact() {
-			return normalize(Normalizer.COMPACT);
+			return normalize(ValueNormalizer.COMPACT);
 		}
 
 		/**
@@ -290,7 +290,7 @@ public final class ExtractionSchema {
 		 * @return 自身
 		 */
 		public FieldBuilder asDate() {
-			return normalize(Normalizer.DATE);
+			return normalize(ValueNormalizer.DATE);
 		}
 
 		/**
@@ -331,7 +331,7 @@ public final class ExtractionSchema {
 		 *
 		 * @return schema
 		 */
-		public ExtractionSchema build() {
+		public OcrFieldSchema build() {
 			return parent.build();
 		}
 

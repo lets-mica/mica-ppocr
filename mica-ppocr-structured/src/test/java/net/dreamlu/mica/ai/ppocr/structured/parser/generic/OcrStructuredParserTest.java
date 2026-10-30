@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>测试数据全部为<b>程序化合成</b>的 OCR 框（坐标与文本均为构造出来的），
  * 不含任何真实证件信息或真实照片。
  */
-class GenericParserTest {
+class OcrStructuredParserTest {
 
 	// ==================================================================
 	// 取值路径
@@ -49,7 +49,7 @@ class GenericParserTest {
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -64,7 +64,7 @@ class GenericParserTest {
 		List<PPOcrV6Result> ocr = new ArrayList<>();
 		ocr.add(box("合同编号：HT-2024-001", 0.95f, 100, 100, 300, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -79,7 +79,7 @@ class GenericParserTest {
 		ocr.add(box("编号", 0.97f, 155, 100, 210, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -92,7 +92,7 @@ class GenericParserTest {
 		ocr.add(box("合同号码", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号", "合同号码").add()
 			.build(), ocr);
 
@@ -112,7 +112,7 @@ class GenericParserTest {
 		ocr.add(box("国籍", 0.98f, 887, 100, 970, 140));
 		ocr.add(box("Nationaliy中国", 0.93f, 882, 100, 1121, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("驾照")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("驾照")
 			.field("gender").labels("性别").add()
 			.field("nationality").labels("国籍").add()
 			.build(), ocr);
@@ -128,7 +128,7 @@ class GenericParserTest {
 		ocr.add(box("性别", 0.98f, 100, 100, 160, 140));
 		ocr.add(box("女", 0.97f, 170, 105, 200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("驾照")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("驾照")
 			.field("gender").labels("性别").add()
 			.build(), ocr);
 
@@ -142,7 +142,7 @@ class GenericParserTest {
 		ocr.add(box("金额", 0.98f, 100, 100, 180, 140));
 		ocr.add(box("1234.56", 0.95f, 200, 120, 260, 160));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("amount").labels("金额").add()
 			.build(), ocr);
 
@@ -156,7 +156,7 @@ class GenericParserTest {
 		ocr.add(box("金额", 0.98f, 100, 100, 160, 140));
 		ocr.add(box("999999", 0.99f, 1000, 100, 1100, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("amount").labels("金额").add()
 			.build(), ocr);
 
@@ -173,7 +173,7 @@ class GenericParserTest {
 		List<PPOcrV6Result> ocr = new ArrayList<>();
 		ocr.add(box("622848012345", 0.97f, 100, 100, 300, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("订单")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("订单")
 			.field("orderNo").regex("\\d{12}").add()
 			.build(), ocr);
 
@@ -188,7 +188,7 @@ class GenericParserTest {
 		ocr.add(box("622848012345", 0.96f, 200, 104, 320, 140));
 		ocr.add(box("6228480123456789", 0.96f, 1000, 104, 1200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("订单")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("订单")
 			.field("orderNo").labels("订单号").regex("\\d{16}").add()
 			.build(), ocr);
 
@@ -202,7 +202,7 @@ class GenericParserTest {
 		ocr.add(box("订单号", 0.98f, 100, 100, 180, 140));
 		ocr.add(box("ABC-123", 0.96f, 200, 104, 320, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("订单")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("订单")
 			.field("orderNo").labels("订单号").regex("\\d{16}").add()
 			.build(), ocr);
 
@@ -219,7 +219,7 @@ class GenericParserTest {
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").compact().add()
 			.build(), ocr);
 
@@ -232,7 +232,7 @@ class GenericParserTest {
 		ocr.add(box("签订日期", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("2017年5月8日", 0.94f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("signDate").labels("签订日期").asDate().rules(FieldRule.date()).add()
 			.build(), ocr);
 
@@ -249,7 +249,7 @@ class GenericParserTest {
 		ocr.add(box("公民身份号码", 0.98f, 100, 100, 280, 140));
 		ocr.add(box("1101051949123100XX", 0.95f, 300, 104, 480, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("身份证")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("身份证")
 			.field("idNo").labels("公民身份号码").regex("\\d{18}").compact().add()
 			.build(), ocr);
 
@@ -266,7 +266,7 @@ class GenericParserTest {
 		ocr.add(box("公民身份号码", 0.98f, 100, 100, 280, 140));
 		ocr.add(box("11010519491231002X", 0.95f, 300, 104, 480, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("身份证")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("身份证")
 			.field("idNo").labels("公民身份号码").regex("\\d{17}X").compact().add()
 			.build(), ocr);
 
@@ -283,7 +283,7 @@ class GenericParserTest {
 		ocr.add(box("622848012345", 0.96f, 200, 104, 320, 140));
 		ocr.add(box("6228480123456789", 0.96f, 1000, 104, 1200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("订单")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("订单")
 			.field("orderNo").labels("订单号").regex("\\d{16}").add()
 			.build(), ocr);
 
@@ -302,7 +302,7 @@ class GenericParserTest {
 		ocr.add(box("公民身份号码", 0.98f, 100, 100, 280, 140));
 		ocr.add(box("110105194912310021", 0.90f, 300, 104, 480, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("身份证")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("身份证")
 			.field("idNumber").labels("公民身份号码").rules(FieldRule.idCardNumber()).add()
 			.build(), ocr);
 
@@ -320,7 +320,7 @@ class GenericParserTest {
 		ocr.add(box("公民身份号码", 0.98f, 100, 100, 280, 140));
 		ocr.add(box("11010519491231002X", 0.95f, 300, 104, 480, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("身份证")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("身份证")
 			.field("idNumber").labels("公民身份号码").rules(FieldRule.idCardNumber()).add()
 			.build(), ocr);
 
@@ -340,7 +340,7 @@ class GenericParserTest {
 		List<PPOcrV6Result> ocr = new ArrayList<>();
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.field("amount").labels("金额").add()
 			.build(), ocr);
@@ -357,7 +357,7 @@ class GenericParserTest {
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.field("remark").labels("备注").optional().add()
 			.build(), ocr);
@@ -376,7 +376,7 @@ class GenericParserTest {
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 		ocr.add(box("HT-2024-001", 0.96f, 220, 104, 340, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -391,7 +391,7 @@ class GenericParserTest {
 		List<PPOcrV6Result> ocr = new ArrayList<>();
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -404,7 +404,7 @@ class GenericParserTest {
 		List<PPOcrV6Result> ocr = new ArrayList<>();
 		ocr.add(box("合同编号", 0.98f, 100, 100, 200, 140));
 
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), ocr);
 
@@ -413,7 +413,7 @@ class GenericParserTest {
 
 	@Test
 	void parse_emptyInput_noExceptionAndAllFieldsMissing() {
-		GenericResult r = parse(ExtractionSchema.builder("采购合同")
+		OcrStructuredResult r = parse(OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build(), new ArrayList<>());
 
@@ -426,8 +426,8 @@ class GenericParserTest {
 	// 辅助
 	// ==================================================================
 
-	private static GenericResult parse(ExtractionSchema schema, List<PPOcrV6Result> ocr) {
-		return new GenericParser(schema).parseResults(ocr);
+	private static OcrStructuredResult parse(OcrFieldSchema schema, List<PPOcrV6Result> ocr) {
+		return new OcrStructuredParser(schema).parseResults(ocr);
 	}
 
 	/**

@@ -23,8 +23,8 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.bankcard.BankCardParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.business.BusinessLicenseParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.driver.DriverLicenseParser;
-import net.dreamlu.mica.ai.ppocr.structured.parser.generic.ExtractionSchema;
-import net.dreamlu.mica.ai.ppocr.structured.parser.generic.GenericParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.generic.OcrFieldSchema;
+import net.dreamlu.mica.ai.ppocr.structured.parser.generic.OcrStructuredParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.household.HouseholdRegisterParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.idcard.IdCardParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.invoice.InvoiceParser;
@@ -402,7 +402,7 @@ public final class PPOcrTemplate {
 	/**
 	 * 创建通用结构化解析器（声明式 schema 入口）。
 	 *
-	 * <p>用于新增单据类型：写一份 {@link ExtractionSchema} 描述"字段名 → 标签 / 正则 /
+	 * <p>用于新增单据类型：写一份 {@link OcrFieldSchema} 描述"字段名 → 标签 / 正则 /
 	 * 校验规则"即可抽取字段，无需再实现一个解析器类。存量 10 个强类型解析器不受影响，
 	 * 两者并行存在。
 	 *
@@ -410,10 +410,10 @@ public final class PPOcrTemplate {
 	 * @return 通用解析器实例（已绑定当前 engine）
 	 * @throws IllegalArgumentException schema 为 null
 	 */
-	public GenericParser generic(ExtractionSchema schema) {
+	public OcrStructuredParser generic(OcrFieldSchema schema) {
 		if (schema == null) {
 			throw new IllegalArgumentException("schema must not be null");
 		}
-		return new GenericParser(engine, schema);
+		return new OcrStructuredParser(engine, schema);
 	}
 }

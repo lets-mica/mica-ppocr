@@ -41,7 +41,7 @@ import java.util.regex.Pattern;
  * {@link Validations}，与存量 10 个强类型解析器共用同一套校验位实现，
  * 不存在两套口径。
  *
- * @see ExtractionSchema.FieldBuilder#rules(FieldRule...)
+ * @see OcrFieldSchema.FieldBuilder#rules(FieldRule...)
  */
 public class FieldRule {
 

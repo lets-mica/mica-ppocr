@@ -34,11 +34,11 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 通用解析器：用一份声明式 schema 把 OCR 散落文字框组织成业务字段。
+ * 通用结构化解析器：用一份声明式 schema 把 OCR 散落文字框组织成业务字段。
  *
- * <p><b>定位</b>：新增单据类型的<b>增量入口</b> —— 不再为每种单据写一个 Java 解析器类，
- * 改成用 {@link ExtractionSchema} 描述字段结构即可。存量 10 个强类型解析器不受影响，
- * 也不需要迁移；两者<b>并行存在</b>。
+ * <p><b>定位</b>：schema 驱动的通用版结构化解析器 —— 新增单据类型的<b>增量入口</b>，
+ * 不再为每种单据写一个 Java 解析器类，改成用 {@link OcrFieldSchema} 描述字段结构即可。
+ * 存量 10 个强类型解析器不受影响，也不需要迁移；两者<b>并行存在</b>。
  *
  * <p><b>取值路径</b>（按优先级）：
  * <ol>
@@ -62,22 +62,22 @@ import java.util.Set;
  * <p>本类不可变（schema 不可变），可安全多线程复用。
  *
  * <pre>
- * ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+ * OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
  *     .field("contractNo").labels("合同编号").compact().add()
  *     .build();
- * GenericParser parser = new GenericParser(engine, schema);
- * GenericResult result = parser.parse(imagePath);
+ * OcrStructuredParser parser = new OcrStructuredParser(engine, schema);
+ * OcrStructuredResult result = parser.parse(imagePath);
  * </pre>
  *
- * @see ExtractionSchema
- * @see GenericResult
+ * @see OcrFieldSchema
+ * @see OcrStructuredResult
  */
-public class GenericParser extends BaseStructuredParser<GenericResult> {
+public class OcrStructuredParser extends BaseStructuredParser<OcrStructuredResult> {
 
 	/**
 	 * 字段声明。
 	 */
-	private final ExtractionSchema schema;
+	private final OcrFieldSchema schema;
 
 	/**
 	 * 构造通用解析器。
@@ -86,7 +86,7 @@ public class GenericParser extends BaseStructuredParser<GenericResult> {
 	 * @param schema 字段声明；不可为 null
 	 * @throws IllegalArgumentException schema 为 null
 	 */
-	public GenericParser(PPOcrV6Engine engine, ExtractionSchema schema) {
+	public OcrStructuredParser(PPOcrV6Engine engine, OcrFieldSchema schema) {
 		super(engine);
 		if (schema == null) {
 			throw new IllegalArgumentException("schema must not be null");
@@ -100,7 +100,7 @@ public class GenericParser extends BaseStructuredParser<GenericResult> {
 	 * @param schema 字段声明；不可为 null
 	 * @throws IllegalArgumentException schema 为 null
 	 */
-	public GenericParser(ExtractionSchema schema) {
+	public OcrStructuredParser(OcrFieldSchema schema) {
 		this(null, schema);
 	}
 
@@ -109,13 +109,13 @@ public class GenericParser extends BaseStructuredParser<GenericResult> {
 	 *
 	 * @return schema
 	 */
-	public ExtractionSchema schema() {
+	public OcrFieldSchema schema() {
 		return schema;
 	}
 
 	@Override
-	public GenericResult parseResults(List<PPOcrV6Result> results) {
-		GenericResult result = new GenericResult();
+	public OcrStructuredResult parseResults(List<PPOcrV6Result> results) {
+		OcrStructuredResult result = new OcrStructuredResult();
 		result.setDocumentType(schema.documentType());
 		List<PPOcrV6Result> ocr = results == null
 			? CollUtil.<PPOcrV6Result>listOf()
@@ -201,7 +201,7 @@ public class GenericParser extends BaseStructuredParser<GenericResult> {
 	 * @param hit        标签命中信息，可为 null
 	 * @param labelBoxes 全局标签框集合
 	 */
-	private void extractField(GenericResult result, FieldSpec spec, List<PPOcrV6Result> ocr,
+	private void extractField(OcrStructuredResult result, FieldSpec spec, List<PPOcrV6Result> ocr,
 							  LabelMatcher.LabelHit hit, Set<PPOcrV6Result> labelBoxes) {
 		// 路径一/二：标签定位（含合并框剥值）
 		String labelRaw = null;

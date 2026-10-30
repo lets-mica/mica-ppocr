@@ -42,7 +42,7 @@ import java.util.Map;
  *
  * <p>典型用法：
  * <pre>
- * GenericResult r = parser.parse(imagePath);
+ * OcrStructuredResult r = parser.parse(imagePath);
  * String contractNo = r.getValue("contractNo");
  * if (!r.allTrusted()) {
  *     // 逐字段看原因
@@ -50,12 +50,12 @@ import java.util.Map;
  * }
  * </pre>
  *
- * @see GenericParser
- * @see ExtractionSchema
+ * @see OcrStructuredParser
+ * @see OcrFieldSchema
  */
 @Data
 @EqualsAndHashCode(callSuper = true)
-public class GenericResult extends BaseStructuredResult {
+public class OcrStructuredResult extends BaseStructuredResult {
 
 	/**
 	 * 单据类型名（来自 schema）。

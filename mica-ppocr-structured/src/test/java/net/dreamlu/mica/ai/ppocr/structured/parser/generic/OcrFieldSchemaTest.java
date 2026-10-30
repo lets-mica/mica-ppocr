@@ -29,15 +29,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * 声明式 schema、字段规则与归一化方式的单元测试。
  */
-class ExtractionSchemaTest {
+class OcrFieldSchemaTest {
 
 	// ==================================================================
-	// ExtractionSchema
+	// OcrFieldSchema
 	// ==================================================================
 
 	@Test
 	void builder_keepsDocumentTypeAndFieldOrder() {
-		ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+		OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.field("amount").labels("金额").add()
 			.build();
@@ -50,7 +50,7 @@ class ExtractionSchemaTest {
 
 	@Test
 	void builder_missingAdd_stillKeepsField() {
-		ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+		OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号")
 			.field("amount").labels("金额")
 			.build();
@@ -60,7 +60,7 @@ class ExtractionSchemaTest {
 
 	@Test
 	void builder_keepsAllLabelVariants() {
-		ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+		OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号", "合同号", "合同号码").add()
 			.build();
 
@@ -71,7 +71,7 @@ class ExtractionSchemaTest {
 
 	@Test
 	void builder_fieldWithoutLabels_usesRegexPathOnly() {
-		ExtractionSchema schema = ExtractionSchema.builder("订单")
+		OcrFieldSchema schema = OcrFieldSchema.builder("订单")
 			.field("orderNo").regex("\\d{12}").add()
 			.build();
 
@@ -82,18 +82,18 @@ class ExtractionSchemaTest {
 
 	@Test
 	void builder_fieldDefaultsToRequiredAndNormalizerNone() {
-		ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+		OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build();
 
 		FieldSpec spec = schema.fields().get(0);
 		assertFalse(spec.optional());
-		assertEquals(Normalizer.NONE, spec.normalizer());
+		assertEquals(ValueNormalizer.NONE, spec.normalizer());
 	}
 
 	@Test
 	void schema_isImmutable_fieldListUnmodifiable() {
-		ExtractionSchema schema = ExtractionSchema.builder("采购合同")
+		OcrFieldSchema schema = OcrFieldSchema.builder("采购合同")
 			.field("contractNo").labels("合同编号").add()
 			.build();
 
@@ -103,14 +103,14 @@ class ExtractionSchemaTest {
 
 	@Test
 	void builder_blankDocumentType_throws() {
-		assertThrows(IllegalArgumentException.class, () -> ExtractionSchema.builder(""));
-		assertThrows(IllegalArgumentException.class, () -> ExtractionSchema.builder(null));
+		assertThrows(IllegalArgumentException.class, () -> OcrFieldSchema.builder(""));
+		assertThrows(IllegalArgumentException.class, () -> OcrFieldSchema.builder(null));
 	}
 
 	@Test
 	void builder_blankFieldName_throws() {
 		assertThrows(IllegalArgumentException.class,
-			() -> ExtractionSchema.builder("采购合同").field("").add().build());
+			() -> OcrFieldSchema.builder("采购合同").field("").add().build());
 	}
 
 	// ==================================================================
@@ -176,33 +176,33 @@ class ExtractionSchemaTest {
 	}
 
 	// ==================================================================
-	// Normalizer
+	// ValueNormalizer
 	// ==================================================================
 
 	@Test
 	void normalizer_none_returnsInputUnchanged() {
-		assertEquals(" HT-2024 ", Normalizer.NONE.apply(" HT-2024 "));
-		assertNull(Normalizer.NONE.apply(null));
+		assertEquals(" HT-2024 ", ValueNormalizer.NONE.apply(" HT-2024 "));
+		assertNull(ValueNormalizer.NONE.apply(null));
 	}
 
 	@Test
 	void normalizer_digits_keepsDigitsOnly() {
-		assertEquals("2024001", Normalizer.DIGITS.apply("HT-2024-001"));
-		assertEquals("", Normalizer.DIGITS.apply("abc"));
+		assertEquals("2024001", ValueNormalizer.DIGITS.apply("HT-2024-001"));
+		assertEquals("", ValueNormalizer.DIGITS.apply("abc"));
 	}
 
 	@Test
 	void normalizer_compact_keepsLettersAndCjk() {
-		assertEquals("HT2024001", Normalizer.COMPACT.apply("HT-2024-001"));
-		assertEquals("11010519491231002X", Normalizer.COMPACT.apply("110105 19491231002X"));
-		assertEquals("北京市海淀区", Normalizer.COMPACT.apply("北京市 海淀区"));
+		assertEquals("HT2024001", ValueNormalizer.COMPACT.apply("HT-2024-001"));
+		assertEquals("11010519491231002X", ValueNormalizer.COMPACT.apply("110105 19491231002X"));
+		assertEquals("北京市海淀区", ValueNormalizer.COMPACT.apply("北京市 海淀区"));
 	}
 
 	@Test
 	void normalizer_date_repairsSeparatorAndKeepsIllegalDate() {
-		assertEquals("2017-05-08", Normalizer.DATE.apply("2017年5月8日"));
-		assertEquals("2017-05-08", Normalizer.DATE.apply("2017-05-08"));
-		assertEquals("2017-05-08", Normalizer.DATE.apply("20170508"), "纯数字 8 位也会还原成标准形态");
-		assertEquals("2017-13-45", Normalizer.DATE.apply("2017-13-45"), "非法日期宁可不修");
+		assertEquals("2017-05-08", ValueNormalizer.DATE.apply("2017年5月8日"));
+		assertEquals("2017-05-08", ValueNormalizer.DATE.apply("2017-05-08"));
+		assertEquals("2017-05-08", ValueNormalizer.DATE.apply("20170508"), "纯数字 8 位也会还原成标准形态");
+		assertEquals("2017-13-45", ValueNormalizer.DATE.apply("2017-13-45"), "非法日期宁可不修");
 	}
 }

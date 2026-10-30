@@ -30,9 +30,9 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.core.DateRepair;
  *
  * <p>本枚举为纯函数，零依赖、线程安全。
  *
- * @see ExtractionSchema.FieldBuilder#normalize(Normalizer)
+ * @see OcrFieldSchema.FieldBuilder#normalize(ValueNormalizer)
  */
-public enum Normalizer {
+public enum ValueNormalizer {
 
 	/**
 	 * 原样保留，不做任何处理。
