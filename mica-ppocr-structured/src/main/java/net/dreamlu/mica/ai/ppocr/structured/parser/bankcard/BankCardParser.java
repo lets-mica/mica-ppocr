@@ -20,7 +20,12 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParsedField;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ValidationResult;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -92,36 +97,44 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 	 * <p>支持 OCR 把分隔符识别成短横线等非数字字符的场景（如 "62223700-3333-626"）：
 	 * 先清理所有非数字字符，再匹配 16~19 位数字串。
 	 */
-	private static String parseCardNumber(List<PPOcrV6Result> results) {
-		String hit = LabelMatcher.matchPattern(results, CARD_NUMBER_SPACED_16, false);
-		if (hit != null) {
-			return hit.replace(" ", "");
+	private static ParsedField parseCardNumber(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch hit = LabelMatcher.matchPatternWithBox(results, CARD_NUMBER_SPACED_16, false);
+		if (hit.hasValue()) {
+			// 来源是「内容正则」而非标签定位 ⇒ 记 PATTERN（不吃标签定位的置信度折扣）
+			return LabelMatcher.toParsedField(hit, FieldSource.PATTERN, hit.value().replace(" ", ""));
 		}
 		// 清理所有非数字字符（空格、短横线等），再匹配 16~19 位连续数字
-		hit = LabelMatcher.matchSubstring(results, text -> {
+		hit = LabelMatcher.matchSubstringWithBox(results, text -> {
 			String digits = text.replaceAll("[^0-9]", "");
 			Matcher m = CARD_NUMBER_PATTERN.matcher(digits);
 			return m.find() ? m.group() : null;
 		});
-		if (hit != null) {
-			return hit;
+		if (hit.hasValue()) {
+			return LabelMatcher.toParsedField(hit, FieldSource.PATTERN);
 		}
 		log.warn("银行卡解析：未匹配到卡号");
-		return null;
+		return ParsedField.missing();
 	}
 
 	/**
 	 * 有效期提取：按"VALID THRU"/"MONTH/YEAR"/"月/年" 标签定位 + MM/YY 正则兜底。
 	 */
-	private static String parseValidDate(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "VALID THRU");
-		if (labelValue == null) {
-			labelValue = LabelMatcher.matchValue(results, "MONTH/YEAR");
+	private static ParsedField parseValidDate(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "VALID THRU");
+		if (!labelValue.hasValue()) {
+			labelValue = LabelMatcher.matchValueWithBox(results, "MONTH/YEAR");
 		}
-		if (labelValue == null) {
-			labelValue = LabelMatcher.matchValue(results, "月/年");
+		if (!labelValue.hasValue()) {
+			labelValue = LabelMatcher.matchValueWithBox(results, "月/年");
 		}
-		return LabelMatcher.labelOrFallback(labelValue, results, VALID_DATE_PATTERN, "有效期", false);
+		if (labelValue.hasValue() && VALID_DATE_PATTERN.matcher(labelValue.value()).matches()) {
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
+		}
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchPatternWithBox(results, VALID_DATE_PATTERN, false);
+		if (fallback.hasValue()) {
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
@@ -133,7 +146,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 	 * <p>排除已知英文标签：VALID/THRU/DEBIT/CREDIT/GOLD/ETC/ATM/Quick/Pass/UnionPay/BANK 等
 	 * （这些标签满足 HOLDER_NAME_PATTERN 的格式但并非持卡人姓名）。
 	 */
-	private static String parseHolderName(List<PPOcrV6Result> results) {
+	private static ParsedField parseHolderName(List<PPOcrV6Result> results) {
 		// 已知英文标签黑名单已提取为类常量 {@link #HOLDER_NAME_BLACKLIST}
 
 		// 计算图片底部 y 边界
@@ -154,7 +167,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 			}
 		}
 
-		String hit = LabelMatcher.matchPattern(results, text -> {
+		LabelMatcher.LabeledMatch hit = LabelMatcher.matchPatternWithBox(results, text -> {
 			if (!HOLDER_NAME_PATTERN.matcher(text).matches()) {
 				return false;
 			}
@@ -166,11 +179,12 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 			Integer minY = firstMinY.get(text);
 			return minY == null || minY >= bottomY;
 		}, false);
-		if (hit != null) {
-			return hit.replace(".", ". ").replace("  ", " ").trim();
+		if (hit.hasValue()) {
+			return LabelMatcher.toParsedField(hit, FieldSource.PATTERN,
+				hit.value().replace(".", ". ").replace("  ", " ").trim());
 		}
 		log.warn("银行卡解析：未匹配到持卡人");
-		return null;
+		return ParsedField.missing();
 	}
 
 	/**
@@ -178,7 +192,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 	 *
 	 * <p>选最顶（minY 最小）的命中框作为发卡行。
 	 */
-	private static String parseBankName(List<PPOcrV6Result> results) {
+	private static ParsedField parseBankName(List<PPOcrV6Result> results) {
 		// 收集所有中文 ≥4 字的候选框，按 minY 升序取第一个
 		List<PPOcrV6Result> candidates = new ArrayList<>();
 		for (PPOcrV6Result r : results) {
@@ -193,11 +207,12 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		}
 		if (candidates.isEmpty()) {
 			log.warn("银行卡解析：未匹配到发卡行");
-			return null;
+			return ParsedField.missing();
 		}
 		// 按 minY 升序，取最顶部的
 		candidates.sort((a, b) -> Integer.compare(LabelMatcher.minY(a), LabelMatcher.minY(b)));
-		return candidates.get(0).text();
+		PPOcrV6Result top = candidates.get(0);
+		return ParsedField.pattern(top.text(), top.score());
 	}
 
 	/**
@@ -206,32 +221,49 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 	 * <p>银行卡上类型标签常与中文/英文合并识别（如 "借记卡DEBITCARD"/"(借记卡/DEBIT)"），
 	 * 因此使用子串查找（find）而非整串匹配（matches）。
 	 */
-	private static String parseCardType(List<PPOcrV6Result> results) {
+	private static ParsedField parseCardType(List<PPOcrV6Result> results) {
 		// 1) 中文优先：扫描所有框，找含"借记卡"或"信用卡"子串的文本
 		for (PPOcrV6Result r : results) {
 			String text = r.text();
-			if (text.contains("借记卡")) return "借记卡";
-			if (text.contains("信用卡")) return "信用卡";
+			if (text.contains("借记卡")) return ParsedField.pattern("借记卡", r.score());
+			if (text.contains("信用卡")) return ParsedField.pattern("信用卡", r.score());
 		}
 		// 2) 英文兜底：扫描所有框，找含 DEBIT 或 CREDIT 子串的文本（大小写不敏感）
 		for (PPOcrV6Result r : results) {
 			String text = r.text().toUpperCase();
-			if (text.contains("DEBIT")) return "DEBIT";
-			if (text.contains("CREDIT")) return "CREDIT";
+			if (text.contains("DEBIT")) return ParsedField.pattern("DEBIT", r.score());
+			if (text.contains("CREDIT")) return ParsedField.pattern("CREDIT", r.score());
 		}
 		log.warn("银行卡解析：未匹配到卡片类型");
-		return null;
+		return ParsedField.missing();
 	}
 
 	@Override
 	public BankCardResult parseResults(List<PPOcrV6Result> results) {
 		BankCardResult r = new BankCardResult();
 		r.setRawResults(new ArrayList<>(results));
-		r.setCardNumber(parseCardNumber(results));
-		r.setValidDate(parseValidDate(results));
-		r.setHolderName(parseHolderName(results));
-		r.setBankName(parseBankName(results));
-		r.setCardType(parseCardType(results));
+		ParsedField cardNumber = parseCardNumber(results);
+		ParsedField validDate = parseValidDate(results);
+		ParsedField holderName = parseHolderName(results);
+		ParsedField bankName = parseBankName(results);
+		ParsedField cardType = parseCardType(results);
+		r.setCardNumber(cardNumber.value());
+		r.setValidDate(validDate.value());
+		r.setHolderName(holderName.value());
+		r.setBankName(bankName.value());
+		r.setCardType(cardType.value());
+
+		// —— 正确性层：Luhn 校验 + 字段级置信度 ——
+		// 卡号 Luhn 不通过 = 至少认错了一个数字，置信度直接归零并标记需复核。
+		ValidationResult validation = Validations.validateBankCard(cardNumber.value());
+		if (validation.mismatched()) {
+			log.warn("银行卡解析：{}", validation.message());
+		}
+		r.putFieldConfidence(FieldConfidence.of("cardNumber", cardNumber, validation));
+		r.putFieldConfidence(FieldConfidence.of("validDate", validDate, null));
+		r.putFieldConfidence(FieldConfidence.of("holderName", holderName, null));
+		r.putFieldConfidence(FieldConfidence.of("bankName", bankName, null));
+		r.putFieldConfidence(FieldConfidence.of("cardType", cardType, null));
 		return r;
 	}
 }

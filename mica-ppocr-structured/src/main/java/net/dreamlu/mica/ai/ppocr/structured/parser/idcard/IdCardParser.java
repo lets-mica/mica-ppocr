@@ -20,7 +20,12 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParsedField;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ValidationResult;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +45,9 @@ import java.util.regex.Pattern;
  *       有效期限 从 "YYYY.MM.DD[-YYYY.MM.DD]" 文本中按 "." 分隔符切出起止。</li>
  *   <li><b>15 位兼容</b>：早期签发的 15 位身份证号（无校验位、第 7-12 位为 YYMMDD）
  *       一并支持；出生日期 OCR 残缺时从身份证号推算（15 位 YY 默认按 19YY 补全）。</li>
+ *   <li><b>正确性层</b>：身份证号走 GB 11643 校验位（{@link Validations#validateIdCard}）——
+ *       校验不过说明至少认错了一个字符，该字段置信度直接归零并标记需复核；
+ *       性别缺失时由身份证号的性别位回填。</li>
  * </ul>
  */
 @Slf4j
@@ -112,9 +120,9 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * 未命中时走标准标签定位，最后兜底"标签下方 x 重叠"的值框查找
 	 * （兼容 doc_ori 90° 旋转后值框堆叠在标签正下方的场景）。
 	 */
-	private static String parseGender(List<PPOcrV6Result> results) {
+	private static ParsedField parseGender(List<PPOcrV6Result> results) {
 		// 1. 合并框切割：标准 "性别男民族汉" + 残片 "别男民族汉" / "性男民族汉" 单框
-		String mergedValue = LabelMatcher.matchSubstring(results, text -> {
+		LabelMatcher.LabeledMatch merged = LabelMatcher.matchSubstringWithBox(results, text -> {
 			String std = cutAtNextLabel(afterLabel(text, "性别"));
 			if (std != null) {
 				return std;
@@ -129,17 +137,21 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			}
 			return null;
 		});
-		if (mergedValue != null) {
-			return mergedValue;
+		if (merged.hasValue()) {
+			return LabelMatcher.toParsedField(merged, FieldSource.LABEL);
 		}
 		// 2. 标准标签定位（值在右侧）
-		String labelValue = LabelMatcher.matchValueFromPrefix(results, "性别");
-		String cut = cutAtNextLabel(labelValue);
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueFromPrefixWithBox(results, "性别");
+		String cut = cutAtNextLabel(labelValue.value());
 		if (cut != null) {
-			return cut;
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL, cut);
 		}
 		// 3. 兜底：值框堆叠在"性别"标签正下方（同 x 范围、y 在下方）
-		return matchValueBelowLabel(results, "性别", "男|女");
+		LabelMatcher.LabeledMatch below = matchValueBelowLabel(results, "性别", "男|女");
+		if (below.hasValue()) {
+			return LabelMatcher.toParsedField(below, FieldSource.LABEL);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
@@ -151,12 +163,12 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * @param results      OCR 结果列表
 	 * @param label        字段标签（用于定位 label 框）
 	 * @param valuePattern 值文本首部需匹配的正则（如 "男|女"）
-	 * @return 切出的字段值；无候选时返回 null
+	 * @return 切出的字段值 + 值框；无候选时返回仅含 null value 的 LabeledMatch
 	 */
-	private static String matchValueBelowLabel(List<PPOcrV6Result> results, String label, String valuePattern) {
+	private static LabelMatcher.LabeledMatch matchValueBelowLabel(List<PPOcrV6Result> results, String label, String valuePattern) {
 		PPOcrV6Result labelBox = LabelMatcher.findLabelBox(results, label);
 		if (labelBox == null) {
-			return null;
+			return LabelMatcher.LabeledMatch.textOnly(null);
 		}
 		int labelMinX = LabelMatcher.minX(labelBox);
 		int labelMaxX = LabelMatcher.maxX(labelBox);
@@ -196,20 +208,29 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			}
 			// 切出值：到下一个正面标签为止
 			String value = text.substring(m.start());
-			return cutAtNextLabel(value);
+			String cut = cutAtNextLabel(value);
+			if (cut == null) {
+				// 与旧实现保持一致：首个候选切不出值即判定该字段无值
+				return LabelMatcher.LabeledMatch.missingValue();
+			}
+			return LabelMatcher.LabeledMatch.of(cut, r);
 		}
-		return null;
+		return LabelMatcher.LabeledMatch.textOnly(null);
 	}
 
 	/**
 	 * 民族提取：优先尝试合并框切割（兼容 "性别男民族汉" 双标签连写合并框），未命中时走标准标签定位。
 	 */
-	private static String parseNation(List<PPOcrV6Result> results) {
-		String mergedValue = LabelMatcher.matchSubstring(results, text -> afterLabel(text, "民族"));
-		if (mergedValue != null) {
-			return mergedValue;
+	private static ParsedField parseNation(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch merged = LabelMatcher.matchSubstringWithBox(results, text -> afterLabel(text, "民族"));
+		if (merged.hasValue()) {
+			return LabelMatcher.toParsedField(merged, FieldSource.LABEL);
 		}
-		return LabelMatcher.matchValueFromPrefix(results, "民族");
+		LabelMatcher.LabeledMatch label = LabelMatcher.matchValueFromPrefixWithBox(results, "民族");
+		if (label.hasValue()) {
+			return LabelMatcher.toParsedField(label, FieldSource.LABEL);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
@@ -267,23 +288,24 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * 若标签定位结果不可用，回退正则（4 位年 + 1~2 位月 + 1~2 位日）；
 	 * 仍不可用时，从身份证号推算（15 位 YY 默认按 19YY 补全，18 位 YYYY 直接取）。
 	 */
-	private static String parseBirthDate(List<PPOcrV6Result> results, String idNumber) {
+	private static ParsedField parseBirthDate(List<PPOcrV6Result> results, String idNumber) {
 		// 支持"出生1966年11月2日"合并框识别
-		String labelValue = LabelMatcher.matchValueFromPrefix(results, "出生");
-		if (labelValue != null) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueFromPrefixWithBox(results, "出生");
+		if (labelValue.hasValue()) {
 			// 出生日期格式较自由（"1966 年 11 月 2 日"），先信任标签定位结果
-			return labelValue;
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
 		}
-		String pattern = LabelMatcher.matchPattern(results, BIRTH_DATE_PATTERN, false);
-		if (pattern != null) {
-			return pattern;
+		LabelMatcher.LabeledMatch pattern = LabelMatcher.matchPatternWithBox(results, BIRTH_DATE_PATTERN, false);
+		if (pattern.hasValue()) {
+			return LabelMatcher.toParsedField(pattern, FieldSource.PATTERN);
 		}
 		// 兜底：身份证号推算（兼容 15 位/18 位 + OCR "出生" 标签整体残缺场景）
 		String fromId = birthDateFromIdNumber(idNumber);
 		if (fromId != null) {
 			log.debug("身份证解析：出生日期身份证号推算命中 \"{}\"", fromId);
+			return ParsedField.derived(fromId);
 		}
-		return fromId;
+		return ParsedField.missing();
 	}
 
 	/**
@@ -560,13 +582,13 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * （"公民身份号码3625..."），故正则兜底用 find() 从任意文本中提取。
 	 * 18 位号码的子序列（前 15 位数字）可能误匹配 15 位正则，故先尝试 18 位。
 	 */
-	private static String parseIdNumber(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValueFromPrefix(results, "公民身份号码");
-		if (labelValue != null && isValidIdNumber(labelValue)) {
-			return labelValue;
+	private static ParsedField parseIdNumber(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueFromPrefixWithBox(results, "公民身份号码");
+		if (labelValue.hasValue() && isValidIdNumber(labelValue.value())) {
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
 		}
 		// 兜底：18 位优先（避免误把 18 位的前 15 位识别成 15 位号码）
-		String fallback = LabelMatcher.matchSubstring(results, text -> {
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchSubstringWithBox(results, text -> {
 			Matcher m = ID_NUMBER_18_PATTERN.matcher(text);
 			if (m.find()) {
 				return m.group();
@@ -574,12 +596,12 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			m = ID_NUMBER_15_PATTERN.matcher(text);
 			return m.find() ? m.group() : null;
 		});
-		if (fallback != null) {
-			log.debug("身份证解析：身份证号正则兜底命中 \"{}\"", fallback);
-			return fallback;
+		if (fallback.hasValue()) {
+			log.debug("身份证解析：身份证号正则兜底命中 \"{}\"", fallback.value());
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
 		}
 		log.warn("身份证解析：未匹配到身份证号");
-		return null;
+		return ParsedField.missing();
 	}
 
 	/**
@@ -619,6 +641,25 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 		return new String[]{parts[0], parts[1]};
 	}
 
+	/**
+	 * 姓名：标签定位（兼容 "姓名" 与值合并成一框）。
+	 */
+	private static ParsedField parseName(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch match = LabelMatcher.matchValueFromPrefixWithBox(results, "姓名");
+		if (match.hasValue()) {
+			return LabelMatcher.toParsedField(match, FieldSource.LABEL);
+		}
+		return ParsedField.missing();
+	}
+
+	/**
+	 * 住址：多框拼接，OCR 置信度取首个片段。
+	 */
+	private static ParsedField parseAddressField(List<PPOcrV6Result> results) {
+		String address = parseAddress(results);
+		return address == null ? ParsedField.missing() : ParsedField.label(address, null);
+	}
+
 	@Override
 	public IdCardResult parseResults(List<PPOcrV6Result> results) {
 		IdCardSide side = detectSide(results);
@@ -626,22 +667,97 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 		r.setRawResults(new ArrayList<>(results));
 		r.setSide(side);
 		if (side == IdCardSide.FRONT) {
-			r.setName(LabelMatcher.matchValueFromPrefix(results, "姓名"));
-			r.setGender(parseGender(results));
-			r.setNation(parseNation(results));
-			r.setIdNumber(parseIdNumber(results));
-			r.setBirthDate(parseBirthDate(results, r.getIdNumber()));
-			r.setAddress(parseAddress(results));
+			ParsedField name = parseName(results);
+			ParsedField idNumber = parseIdNumber(results);
+			ParsedField gender = parseGender(results);
+			// 性别回填：OCR 把性别值糊掉时，身份证号的性别位（倒数第二位）能救回来
+			if (!gender.hasValue() && idNumber.hasValue()) {
+				String backfilled = Validations.genderFromIdNumber(idNumber.value());
+				if (backfilled != null) {
+					log.debug("身份证解析：性别由身份证号回填为 \"{}\"", backfilled);
+					gender = ParsedField.backfill(backfilled);
+				}
+			}
+			ParsedField nation = parseNation(results);
+			ParsedField birthDate = parseBirthDate(results, idNumber.value());
+			ParsedField address = parseAddressField(results);
+
+			r.setName(name.value());
+			r.setGender(gender.value());
+			r.setNation(nation.value());
+			r.setIdNumber(idNumber.value());
+			r.setBirthDate(birthDate.value());
+			r.setAddress(address.value());
+
+			fillFrontConfidences(r, name, gender, nation, birthDate, address, idNumber);
 		} else if (side == IdCardSide.BACK) {
-			r.setIssuingAuthority(LabelMatcher.matchValueFromPrefix(results, "签发机关"));
+			LabelMatcher.LabeledMatch authority = LabelMatcher.matchValueFromPrefixWithBox(results, "签发机关");
+			r.setIssuingAuthority(authority.value());
 			r.setValidFrom(null);
 			r.setValidTo(null);
 			String[] term = parseValidTerm(results);
 			if (term != null) {
 				r.setValidFrom(term[0]);
 				r.setValidTo(term[1]);
+				r.putFieldConfidence(FieldConfidence.of("validFrom",
+					ParsedField.label(term[0], null), null));
+				r.putFieldConfidence(FieldConfidence.of("validTo",
+					ParsedField.label(term[1], null), null));
 			}
+			r.putFieldConfidence(FieldConfidence.of("issuingAuthority",
+				LabelMatcher.toParsedField(authority, FieldSource.LABEL), null));
 		}
 		return r;
+	}
+
+	/**
+	 * 填充正面字段的置信度信息。
+	 *
+	 * <p><b>正确性层的核心动作</b>：用 GB 11643 校验位给身份证号做一次"数学自洽"检查 ——
+	 * 格式正则只能看出"长得像不像"，校验位能看出"至少认错了一个字符"。
+	 * 校验不通过时，该字段置信度<b>直接归零</b>（而不是打折），并把整条结果标记为需复核。
+	 *
+	 * @param r          解析结果
+	 * @param name       姓名
+	 * @param gender     性别
+	 * @param nation     民族
+	 * @param birthDate  出生日期
+	 * @param address    住址
+	 * @param idNumber   公民身份号码
+	 */
+	private static void fillFrontConfidences(IdCardResult r, ParsedField name, ParsedField gender,
+											ParsedField nation, ParsedField birthDate,
+											ParsedField address, ParsedField idNumber) {
+		ValidationResult idValidation = Validations.validateIdCard(idNumber.value());
+		if (idValidation.mismatched()) {
+			log.warn("身份证解析：{}", idValidation.message());
+		}
+		r.putFieldConfidence(FieldConfidence.of("idNumber", idNumber, idValidation));
+		r.putFieldConfidence(FieldConfidence.of("name", name, null));
+		r.putFieldConfidence(FieldConfidence.of("gender", gender, null));
+		r.putFieldConfidence(FieldConfidence.of("nation", nation, null));
+		r.putFieldConfidence(FieldConfidence.of("birthDate", birthDate, null));
+		r.putFieldConfidence(FieldConfidence.of("address", address, null));
+
+		// 正面这 6 个字段都应存在，缺失即需复核
+		markMissing(r, "name", name);
+		markMissing(r, "gender", gender);
+		markMissing(r, "nation", nation);
+		markMissing(r, "birthDate", birthDate);
+		markMissing(r, "address", address);
+		markMissing(r, "idNumber", idNumber);
+	}
+
+	/**
+	 * 字段缺失时标记需复核（正面版式上该字段本应存在）。
+	 *
+	 * @param r      解析结果
+	 * @param field  字段名
+	 * @param parsed 字段解析结果
+	 */
+	private static void markMissing(IdCardResult r, String field, ParsedField parsed) {
+		if (!parsed.hasValue()) {
+			r.markNeedsReview("正面应有 " + field + " 字段，但未识别到");
+		}
 	}
 }

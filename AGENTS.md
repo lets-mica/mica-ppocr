@@ -55,8 +55,25 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │   └── src/main/java/net/dreamlu/mica/ai/ppocr/structured/parser/
 │       ├── core/                          ← SPI + 公共骨架
 │       │   ├── BaseStructuredParser.java   ← SPI 抽象基类（parseResults + 10 个 parse 重载）
-│       │   ├── BaseStructuredResult.java   ← 结果基类（rawResults + fieldBoxes）
-│       │   └── LabelMatcher.java           ← 标签定位 + 位置匹配 + 正则兜底公共骨架
+│       │   ├── BaseStructuredResult.java   ← 结果基类（rawResults + fieldBoxes + 字段置信度）
+│       │   ├── LabelMatcher.java           ← 标签定位 + 位置匹配 + 正则兜底公共骨架
+│       │   ├── Validations.java            ← 校验位算法（GB 11643 / GB 32100 / Luhn）+ 证件号回填
+│       │   ├── FieldConfidence.java        ← 字段级置信度（值 / 分数 / 来源 / 违规）
+│       │   ├── FieldSource.java            ← 字段取值来源枚举（LABEL/PATTERN/DERIVED/BACKFILL/MISSING）
+│       │   ├── ParsedField.java            ← 字段解析结果（值 + 来源 + OCR 置信度）
+│       │   ├── ValidationResult.java       ← 单条校验结论（PASS/FAIL/UNCHECKABLE）
+│       │   ├── ValidationStatus.java       ← 校验三态枚举
+│       │   ├── LabelMatchStatus.java       ← 标签命中三态（FOUND/LABEL_WITHOUT_VALUE/NOT_FOUND）
+│       │   ├── LabelAliases.java           ← 标签别名表（规范标签 → OCR 认错的写法）
+│       │   └── DateRepair.java             ← 日期修复（分隔符被认错时还原 yyyy-MM-dd）
+│       ├── generic/                       ← 通用解析器（声明式 schema 入口，与存量 10 个强类型 parser 并行）
+│       │   ├── ExtractionSchema.java       ← 声明式 schema（字段名 / 标签 / 正则 / 规则 / 归一化）
+│       │   ├── GenericParser.java          ← 通用解析器（extends BaseStructuredParser）
+│       │   ├── GenericResult.java          ← 通用结果（extends BaseStructuredResult）
+│       │   ├── FieldSpec.java              ← 单字段声明
+│       │   ├── FieldRule.java              ← 字段校验规则（复用 Validations）
+│       │   ├── Normalizer.java             ← 值归一化（NONE / DIGITS / COMPACT / DATE）
+│       │   └── ValueLocator.java           ← 值定位（值归属最近标签 + 垂直重叠率 + 间距上限）
 │       ├── vehicle/     ← 行驶证          ├── idcard/      ← 身份证
 │       ├── bankcard/    ← 银行卡          ├── driver/      ← 机动车驾驶证
 │       ├── business/    ← 营业执照        ├── invoice/     ← 发票（Invoice 分发 + Electronic / Vat）
@@ -78,7 +95,7 @@ mica-ppocr/                     ← parent pom (packaging=pom)
         ├── PPOCRPropertiesCustomizer.java
         ├── PdfAutoConfiguration.java      ← 把 mica.ai.ppocr.pdf.* 绑定为 PdfOcrConfig
         ├── StructuredParserAutoConfiguration.java  ← 注册 10 个内置解析器 + PPOcrTemplate
-        └── PPOcrTemplate.java             ← 解析器模板（10 个 getter + run 重载）
+        └── PPOcrTemplate.java             ← 解析器模板（10 个 getter + generic(schema) + run 重载）
 ```
 
 ## Commands
@@ -383,6 +400,29 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   `household` / `pdd` / `train` / `taxi` 会回填；`idcard` / `driver` / `bankcard` 三个解析器
   仍走丢弃 box 的文本版 `LabelMatcher.matchValue(...)`，`fieldBoxes` 为空 map。
 
+  **正确性层（v1.2.5 起）** —— 另持有 `fieldConfidences`（字段 → `FieldConfidence`）、
+  `needsReview`（是否建议人工复核）与 `reviewReasons`（复核原因）。
+  ⚠️ **校验不通过时字段值仍然保留**，只是该字段置信度**直接归零**（不是打折）并置位 `needsReview` ——
+  校验位不符只说明"至少认错了一个字符"，不等于"没识别出来"，把值丢掉会让下游比现在更糟。
+
+- **`Validations`**（`core/`）— 校验位算法集合（纯函数、零依赖、线程安全）：
+  `validateIdCard`（GB 11643-1999）/ `validateBankCard`（Luhn）/ `validateCreditCode`（GB 32100-2015），
+  另含 `genderFromIdNumber`（从证件号性别位回填性别）与 `birthDateFromIdNumber`。
+  三态语义（`ValidationStatus`）：`PASS` / `FAIL`（校验位不符，**唯一的硬证据**）/ `UNCHECKABLE`
+  （长度或字符集不对，**不能据此断定认错**，不计入违规）。
+  ⚠️ **GB 11643 校验码表的下标是 `sum % 11`**，不是 `(12 - sum % 11) % 11` ——
+  后者会把标准示例 `11010519491231002X`（余 2 → X）误判成不通过。
+
+- **`FieldConfidence` / `FieldSource` / `ParsedField` / `ValidationResult`**（`core/`）— 字段级置信度模型。
+  `FieldSource` 区分取值路径：`LABEL`（标签定位）/ `PATTERN`（正则兜底）/ `DERIVED`（由其它字段推算）/
+  `BACKFILL`（回填）/ `MISSING`（未取到）。
+  ⚠️ **`MISSING`（值压根没取到）不等于"值不可信"**：字段置信度对缺失字段**不触发** `needsReview`，
+  是否要复核由解析器按版面预期显式 `markNeedsReview(...)`（如身份证正面应有姓名/性别/民族等 6 个字段）。
+
+- **`DateRepair`**（`core/`）— 日期修复：把被 OCR 弄乱分隔符的日期还原成 `yyyy-MM-dd`。
+  ⚠️ **"纯数字 8 位"必须排在"结构化切分"之前**：结构化路径会把 `2017-05-1.2` 切成 `2017-05-01`（丢掉 12 的 2），
+  而纯数字路径给出正确的 `2017-05-12`。非法日期（月份 13、2 月 30 日）宁可不修。
+
 - **`BaseStructuredParser.detParams()`** — 解析器声明默认 DB 检测参数的钩子（默认 `null` = 引擎默认）。
   `parse(...)` 一站式方法会带上它；显式传入的 `DbDetParams` 优先，`null` 时回落到本钩子。
   子类可按自己的**版面类型**声明专属检测参数，不影响同引擎上的其它解析器。
@@ -393,12 +433,25 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
     供解析器回填 `fieldBoxes`）；
 
   - `findLabelBox` 支持 OCR 残缺标签模糊匹配；
+    ⚠️ **查找顺序有讲究**：`完整等于 > 以标签开头 > 相邻片段拼接 > fragment 回退 > 别名兜底`。
+    **拼接层必须排在 fragment 回退之前** —— 标签的片段天然是标签的子串，fragment 回退必然先命中单个碎片框，
+    拼接层将永远触发不到；而拼接出的框覆盖整段标签，几何范围比碎片框更准，用它定位右侧的值更可靠。
 
   - `matchPattern` / `labelOrFallback` 内容正则兜底；
 
   - `matchSubstring` OCR 噪声场景的子串提取；
 
   - 几何工具 `minX/maxX/minY/maxY`。
+
+  **标签别名表**（`core/LabelAliases.java`）— 规范标签 → OCR 认错的多种写法。
+  覆盖三类走样："多字"（公民身份号码 → 公民身份证号码）、"带空格"（姓名 → 姓 名）、
+  "换说法"（初次领证日期 → 初次领证年月日）。只在规范标签完全找不到时兜底 ⇒ **只增不减**；
+  `LabelAliases.setEnabled(false)` 可线上止血。
+
+  **unmatched 语义**（`core/LabelMatchStatus.java`）— `LabeledMatch` 新增 `status` 字段，区分三态：
+  `FOUND`（标签与值都取到）/ `LABEL_WITHOUT_VALUE`（标签在、值没识别出来，**值得复核**）/
+  `NOT_FOUND`（压根没这个标签，如身份证反面的"姓名"，属正常）。
+  ⚠️ `LabeledMatch` 的 2 参构造器保留，源码兼容；新增 3 参构造器带状态。
 
 - **10 个内置解析器**（容器注册的 bean）：`bankcard` / `business` / `driver` / `household` / `idcard` /
   `invoice` / `pdd` / `taxi` / `train` / `vehicle`。
@@ -407,6 +460,35 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   其余 9 个直接继承 `BaseStructuredParser<R>`。
   Spring Boot / Solon 通过 `PPOcrTemplate.xxx()` getter（10 个）获取已绑定 engine 的解析器实例。
   调用方也可直接 `new XxxParser(engine).parse(bytes)` 一站式调用。
+
+- **通用解析器**（`generic/`，v1.2.5 起）— **声明式 schema 入口**，与上面 10 个强类型 parser
+  **并行存在**（不替换、不迁移存量 API）。新增单据类型写一份 `ExtractionSchema` 即可抽取字段，
+  无需再实现一个解析器类。
+
+  - `ExtractionSchema.builder("采购合同").field("contractNo").labels("合同编号", "合同号")
+    .compact().add().build()` —— 每个字段可声明：标签列表（首个为规范标签，其余为别名）、
+    内容正则（全匹配语义）、校验规则、归一化方式、是否可选。
+  - `FieldRule` 内置 `digits(n)` / `length(min,max)` / `date()` / `idCardNumber()` / `bankCardNumber()` /
+    `creditCode()` / `of(name, predicate)`；身份证 / 银行卡 / 信用代码三类**直接委托 `Validations`**，
+    与存量解析器共用同一套校验位实现，不存在两套口径。
+  - `Normalizer`：`NONE` / `DIGITS` / `COMPACT` / `DATE`。
+    ⚠️ **归一化在"取值之后、校验之前"执行** —— 调用方拿到的值与规则判定依据的值永远是同一个。
+    ⚠️ 身份证号请用 `COMPACT`（保留末位 `X`），**不要用 `DIGITS`**（会把 `X` 丢掉）。
+  - `GenericResult`：`values`（字段名 → 值）/ `missingFields` / 继承来的 `fieldConfidences` /
+    `needsReview` / `reviewReasons` / `fieldBoxes`；另有 `allTrusted()` 与 `getNeedingReviewFields()`。
+  - **取值路径**（按优先级）：标签定位 → 合并框剥值 → 内容正则兜底 → 字段缺失。
+    标签路径取到的值不符合 schema 正则时改走正则兜底；正则也兜不到就**保留标签值**，
+    交给规则校验暴露问题 —— 宁可保留可能有误的值，也不丢值。
+  - ⚠️ **`ValueLocator` 是通用层内部专用**（包级可见），与存量 `LabelMatcher` **行为完全不同**：
+    存量用「x 中心 > 标签中心 + `dx*10+dy` 打分 + 完全 y 重叠」，通用层用三层判定 ——
+    垂直重叠率 ≥ 0.3、水平间距 ≤ 标签高度 × 8、**值归属最近的标签**。
+    第三条是关键：驾照版面里「性别」的真值「女」未被检出时，若不做归属判定就会越过
+    「国籍」标签抓到「Nationaliy中国」，静默产出错误字段 —— 宁可判定为缺失，也不能给错值。
+    ⚠️ **存量 `LabelMatcher` 一行未动**（它是 10 个强类型 parser 的公共骨架，改默认行为会动到
+    既有的回填与修正逻辑）；两层判定并存是有意的隔离，不是重复实现。
+  - **复核触发**：schema 里声明的字段即"这张单据应该有该字段"，缺失时（除非标了 `optional()`）
+    触发人工复核 —— 这是阶段二「缺失字段由解析器按版面预期显式标记」原则的通用化。
+  - Spring Boot / Solon 通过 `PPOcrTemplate.generic(schema)` 获取已绑定 engine 的通用解析器实例。
 
 ### mica-ppocr-spring-boot-starter
 
@@ -549,3 +631,30 @@ CV_32F 中间 Mat。实测收益：
 
 > 升级任何依赖后，**必须重跑一次字节码校验**（`javap -v -cp <jar> <类>` 看 major version）。
 > 版本号漂移会让本表「已校验 Java 8」的结论失效。
+
+---
+
+## 变更记录（CHANGELOG）写作规范
+
+`CHANGELOG.md` 是**面向使用者的发布说明**，不是开发过程记录。三条硬规则：
+
+1. **一条改动 = 一条 bullet = 一段话，零子条。**
+   与已发布段落（如 v1.2.4）同款写法：`feat(scope): 标题 —— 一段话讲清改了什么、带来什么效果。`
+   不使用 `  - ` 子条分层。
+
+2. **只写「变了什么」与「效果 / 行为要点」，不写「怎么实现」。**
+   实现细节（逐项字段枚举、算法推导、A/B 实测数据、源码级对照）留在 `AGENTS.md` 里，
+   CHANGELOG 不重复。两处内容分工：
+   `CHANGELOG` = 变了什么 → `AGENTS.md` = 怎么实现（含"为什么这么取舍"）。
+
+3. **同一能力只留最终态与效果，周期内的中间调整不单独留条目。**
+   判断依据是**该状态是否在已发布版本里存在过**：
+   - 从未发布过的新增能力（如构造期预热）⇒ 只写一条「新增了什么 + 效果」，
+     其中途的 public→private 调整、新增又删掉的配置项**不单独成条**；
+   - 已发布能力的缺陷修复 ⇒ 写一条 `fix(...)`，把行为变化说清楚。
+
+> ⚠️ **对调用方可见的行为变更必须留**（如校验失败时置信度归零、`close()` 超时后在途推理
+> 可能被中断、`enabled=false` 时 OpenCV 原生库不再加载）；纯内部重构不留。
+
+**长度参照**：已发布段落平均 ~414 字符 / 最长 728（v1.2.4）。单条超过 ~750 就该回头删从句，
+而不是加子条。

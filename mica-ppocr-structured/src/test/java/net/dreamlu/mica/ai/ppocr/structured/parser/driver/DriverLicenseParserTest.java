@@ -17,14 +17,15 @@
 package net.dreamlu.mica.ai.ppocr.structured.parser.driver;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParserTestSupport;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 驾驶证解析器单元测试。
@@ -170,5 +171,96 @@ class DriverLicenseParserTest extends ParserTestSupport {
 		assertNotNull(r);
 		assertEquals("210282198809294228", r.getLicenseNumber());
 		assertEquals("王桃桃", r.getName());
+	}
+
+	// ==================================================================
+	// 正确性层：日期修复 + 性别回填 + 证号校验位
+	// ==================================================================
+
+	@Test
+	void parse_birthDateBrokenSeparator_repaired() {
+		// "2015-0518"：短横线被认成 0 → 按纯数字重排还原
+		List<PPOcrV6Result> results = buildSampleOcr(
+			"440524188001010014",
+			"测试甲",
+			"男",
+			"中国",
+			"测试省甲市甲区",
+			"2015-0518",
+			"2017-05-12",
+			"C1",
+			"测试省公",
+			"安局公安",
+			"交通管理局",
+			"2017-05-12 至 2023-05-12"
+		);
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		assertEquals("2015-05-18", r.getBirthDate());
+	}
+
+	@Test
+	void parse_birthDateNormal_unchanged() {
+		List<PPOcrV6Result> results = buildSampleOcr(
+			"440524188001010014",
+			"测试甲",
+			"男",
+			"中国",
+			"测试省甲市甲区",
+			"2015-05-18",
+			"2017-05-12",
+			"C1",
+			"测试省公",
+			"安局公安",
+			"交通管理局",
+			"2017-05-12 至 2023-05-12"
+		);
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		assertEquals("2015-05-18", r.getBirthDate());
+	}
+
+	@Test
+	void parse_genderBackfilledFromLicenseNo() {
+		// OCR 把"性别"整块漏掉：驾驶证证号即公民身份号码，其性别位能救回
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("中华人民共和国机动车驾驶证", 200, 30, 600, 60),
+			box("证号", 280, 100, 340, 125),
+			box("440524188001010014", 360, 100, 600, 125),
+			box("姓名", 100, 150, 150, 175),
+			box("测试甲", 170, 160, 260, 200)
+		);
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		// 证号第 17 位为 '1'（奇数）→ 男
+		assertEquals("男", r.getGender());
+		FieldConfidence fc = r.getFieldConfidences().get("gender");
+		assertNotNull(fc);
+		assertEquals(FieldSource.BACKFILL, fc.source());
+	}
+
+	@Test
+	void parse_licenseNoChecksumValid_confidenceKept() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("证号", 280, 100, 340, 125),
+			box("440524188001010014", 360, 100, 600, 125)
+		);
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		FieldConfidence fc = r.getFieldConfidences().get("licenseNumber");
+		assertNotNull(fc);
+		assertTrue(fc.score() > 0);
+		assertTrue(fc.violations().isEmpty());
+		assertFalse(r.isNeedsReview());
+	}
+
+	@Test
+	void parse_licenseNoChecksumInvalid_scoreZeroAndNeedsReview() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("证号", 280, 100, 340, 125),
+			box("440524188001010015", 360, 100, 600, 125)
+		);
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		assertEquals("440524188001010015", r.getLicenseNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("licenseNumber");
+		assertNotNull(fc);
+		assertEquals(0d, fc.score(), 1e-9);
+		assertTrue(r.isNeedsReview());
 	}
 }

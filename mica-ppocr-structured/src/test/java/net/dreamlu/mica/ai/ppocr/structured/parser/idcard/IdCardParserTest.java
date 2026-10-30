@@ -17,6 +17,8 @@
 package net.dreamlu.mica.ai.ppocr.structured.parser.idcard;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParserTestSupport;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Test;
@@ -401,5 +403,85 @@ class IdCardParserTest extends ParserTestSupport {
 		assertEquals(IdCardSide.FRONT, r.getSide());
 		// 关键：地址要从两个无标签框中拼出，且排除低分噪声
 		assertEquals("测试省庚市庚区庚街测试镇63号", r.getAddress());
+	}
+
+	// ==================================================================
+	// 正确性层：GB 11643 校验位 + 性别回填 + 字段级置信度
+	// ==================================================================
+
+	/**
+	 * 构造一张正面版式的 OCR 框（身份证号可传参，用于校验位用例）。
+	 *
+	 * @param idNumber 公民身份号码
+	 * @param withGender 是否带"性别"标签与值
+	 * @return OCR 框列表
+	 */
+	private static List<PPOcrV6Result> buildFrontOcr(String idNumber, boolean withGender) {
+		List<PPOcrV6Result> results = new java.util.ArrayList<>();
+		results.add(box("姓名", 60, 100, 140, 130));
+		results.add(box("测试甲", 160, 100, 280, 130));
+		if (withGender) {
+			results.add(box("性别", 60, 160, 140, 190));
+			results.add(box("女", 160, 160, 200, 190));
+		}
+		results.add(box("民族", 280, 160, 360, 190));
+		results.add(box("汉", 380, 160, 420, 190));
+		results.add(box("出生", 60, 220, 140, 250));
+		results.add(box("1996 年 1 月 11 日", 160, 220, 400, 250));
+		results.add(box("住址", 60, 280, 140, 310));
+		results.add(box("测试省甲市甲区", 160, 280, 480, 310));
+		results.add(box("公民身份号码", 60, 380, 240, 410));
+		results.add(box(idNumber, 260, 380, 600, 410));
+		return results;
+	}
+
+	@Test
+	void parse_front_idNumberChecksumValid_confidenceKept() {
+		// 000000199601110004：前 17 位加权和 107，107 % 11 = 8 → 校验码 '4'
+		IdCardResult r = parse(new IdCardParser(null), buildFrontOcr("000000199601110004", true));
+		assertEquals("000000199601110004", r.getIdNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("idNumber");
+		assertNotNull(fc);
+		assertTrue(fc.score() > 0);
+		assertTrue(fc.violations().isEmpty());
+		assertFalse(fc.needsReview());
+		assertFalse(r.isNeedsReview());
+	}
+
+	@Test
+	void parse_front_idNumberChecksumInvalid_scoreZeroAndNeedsReview() {
+		// 校验位应为 '4'，这里写成 '5' —— 至少认错了一个字符
+		IdCardResult r = parse(new IdCardParser(null), buildFrontOcr("000000199601110005", true));
+		// 值本身仍要保留：校验失败不等于"没识别出来"，不能因此把结果丢掉
+		assertEquals("000000199601110005", r.getIdNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("idNumber");
+		assertNotNull(fc);
+		// 校验不通过 → 置信度直接归零（不是打折）
+		assertEquals(0d, fc.score(), 1e-9);
+		assertFalse(fc.violations().isEmpty());
+		assertTrue(fc.needsReview());
+		// 整条结果标记为需复核，并给出原因
+		assertTrue(r.isNeedsReview());
+		assertFalse(r.getReviewReasons().isEmpty());
+	}
+
+	@Test
+	void parse_front_genderBackfilledFromIdNumber() {
+		// OCR 把"性别"整块漏掉：证件号的性别位（倒数第二位 '0'，偶数）能救回
+		IdCardResult r = parse(new IdCardParser(null), buildFrontOcr("000000199601110004", false));
+		assertEquals("女", r.getGender());
+		FieldConfidence fc = r.getFieldConfidences().get("gender");
+		assertNotNull(fc);
+		assertEquals(FieldSource.BACKFILL, fc.source());
+	}
+
+	@Test
+	void parse_front_missingField_markedNeedsReview() {
+		// 正面应有 6 个字段，缺一个就要提示复核
+		List<PPOcrV6Result> results = buildFrontOcr("000000199601110004", true);
+		results.removeIf(r -> "民族".equals(r.text()) || "汉".equals(r.text()));
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertNull(r.getNation());
+		assertTrue(r.isNeedsReview());
 	}
 }

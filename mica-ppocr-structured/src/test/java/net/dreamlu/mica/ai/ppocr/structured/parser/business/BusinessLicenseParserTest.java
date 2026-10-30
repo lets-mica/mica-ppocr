@@ -17,6 +17,7 @@
 package net.dreamlu.mica.ai.ppocr.structured.parser.business;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParserTestSupport;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Test;
@@ -210,4 +211,66 @@ class BusinessLicenseParserTest extends ParserTestSupport {
 		assertEquals("广州市", r.getAddress());
 	}
 
+	// ==================================================================
+	// 正确性层：GB 32100 校验位 + 成立日期修复 + 字段级置信度
+	// ==================================================================
+
+	/**
+	 * 构造一张营业执照的 OCR 框。
+	 *
+	 * @param creditCode 统一社会信用代码
+	 * @param establishDate 成立日期文本
+	 * @return OCR 框列表
+	 */
+	private static List<PPOcrV6Result> buildLicenseOcr(String creditCode, String establishDate) {
+		return CollUtil.listOf(
+			box("统一社会信用代码", 100, 100, 230, 120),
+			box(creditCode, 240, 105, 450, 120),
+			box("名称", 100, 200, 140, 220),
+			box("测试甲公司", 150, 200, 300, 220),
+			box("成立日期", 500, 250, 580, 270),
+			box(establishDate, 590, 250, 750, 270)
+		);
+	}
+
+	@Test
+	void parse_creditCodeChecksumValid_confidenceKept() {
+		// 91350100M000100Y43：前 17 位加权和 1640，1640 % 31 = 28 → 校验位 31 - 28 = 3
+		BusinessLicenseResult r = parse(new BusinessLicenseParser(null),
+			buildLicenseOcr("91350100M000100Y43", "2012年06月08日"));
+		assertEquals("91350100M000100Y43", r.getCreditCode());
+		FieldConfidence fc = r.getFieldConfidences().get("creditCode");
+		assertNotNull(fc);
+		assertTrue(fc.score() > 0);
+		assertTrue(fc.violations().isEmpty());
+		assertFalse(r.isNeedsReview());
+	}
+
+	@Test
+	void parse_creditCodeChecksumInvalid_scoreZeroAndNeedsReview() {
+		// 校验位应为 '3'，这里写成 '4'
+		BusinessLicenseResult r = parse(new BusinessLicenseParser(null),
+			buildLicenseOcr("91350100M000100Y44", "2012年06月08日"));
+		assertEquals("91350100M000100Y44", r.getCreditCode());
+		FieldConfidence fc = r.getFieldConfidences().get("creditCode");
+		assertNotNull(fc);
+		assertEquals(0d, fc.score(), 1e-9);
+		assertFalse(fc.violations().isEmpty());
+		assertTrue(r.isNeedsReview());
+	}
+
+	@Test
+	void parse_establishDateBrokenSeparator_repaired() {
+		// "2012-0608"：短横线被认成 0 → 按纯数字重排还原
+		BusinessLicenseResult r = parse(new BusinessLicenseParser(null),
+			buildLicenseOcr("91350100M000100Y43", "2012-0608"));
+		assertEquals("2012-06-08", r.getEstablishDate());
+	}
+
+	@Test
+	void parse_establishDateNormal_unchanged() {
+		BusinessLicenseResult r = parse(new BusinessLicenseParser(null),
+			buildLicenseOcr("91350100M000100Y43", "2012年06月08日"));
+		assertEquals("2012年06月08日", r.getEstablishDate());
+	}
 }

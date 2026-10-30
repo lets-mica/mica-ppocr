@@ -162,17 +162,20 @@ public class LabelMatcher {
 	 * @return 字段值 + 值框；未匹配到时返回仅含 null value 的 LabeledMatch
 	 */
 	public static LabeledMatch matchValueByCenterWithBox(List<PPOcrV6Result> results, String label) {
-		PPOcrV6Result labelBox = findLabelBox(results, label);
-		if (labelBox == null) {
+		LabelHit labelHit = findLabelHit(results, label);
+		if (labelHit == null) {
 			log.warn("结构化解析：未找到标签 \"{}\"，该字段置 null", label);
 			return LabeledMatch.textOnly(null);
 		}
-
+		PPOcrV6Result labelBox = labelHit.box();
 		String labelText = labelBox.text();
 
 		// 合并框场景：返回 null 让 matchValueFromPrefix 兜底
-		if (labelText.startsWith(label) && labelText.length() > label.length()) {
-			return LabeledMatch.textOnly(null);
+		// 注：这里用"实际命中的标签文本"（可能是别名）而非规范标签，
+		//    否则别名命中时（如 label="公民身份号码" 命中 "身份证号3625..."）会漏判合并框。
+		if (labelText.length() > labelHit.matchedLabel().length()
+			&& labelText.startsWith(labelHit.matchedLabel())) {
+			return LabeledMatch.missingValue();
 		}
 
 		int labelCenterX = (minX(labelBox) + maxX(labelBox)) / 2;
@@ -210,7 +213,7 @@ public class LabelMatcher {
 		}
 		if (best == null) {
 			log.warn("结构化解析：标签 \"{}\" 未匹配到值框，该字段置 null", label);
-			return LabeledMatch.textOnly(null);
+			return LabeledMatch.missingValue();
 		}
 		return LabeledMatch.of(best.text(), best);
 	}
@@ -223,12 +226,21 @@ public class LabelMatcher {
 	 * @return 字段值 + 值框；未匹配到时返回仅含 null value 的 LabeledMatch
 	 */
 	public static LabeledMatch matchValueFromPrefixWithBox(List<PPOcrV6Result> results, String label) {
-		LabeledMatch m = matchValueByCenterWithBox(results, label);
-		if (m.hasValue()) return m;
+		LabeledMatch center = matchValueByCenterWithBox(results, label);
+		if (center.hasValue()) {
+			return center;
+		}
+		LabelHit labelHit = findLabelHit(results, label);
+		if (labelHit == null) {
+			return center;
+		}
+		// 用"实际命中的标签文本"剥值：别名命中时（如 label="公民身份号码" 命中 "身份证号3625..."）
+		// 必须按别名长度切，否则会连标签本身一起剥掉。
+		String prefix = labelHit.matchedLabel();
 		for (PPOcrV6Result r : results) {
 			String text = r.text();
-			if (text.startsWith(label) && text.length() > label.length()) {
-				String stripped = text.substring(label.length());
+			if (text != null && text.length() > prefix.length() && text.startsWith(prefix)) {
+				String stripped = text.substring(prefix.length());
 				// 合并框"发票代码：041002000112" → 冒号是标签与值的分隔符,
 				// 须继续剥离前导标点,否则下游正则(^\d{8,12}$)无法命中。
 				int s = 0;
@@ -239,7 +251,7 @@ public class LabelMatcher {
 				return LabeledMatch.of(stripped, r);
 			}
 		}
-		return LabeledMatch.textOnly(null);
+		return center;
 	}
 
 	/**
@@ -290,15 +302,27 @@ public class LabelMatcher {
 	 * @return 命中文本；无匹配时返回 null
 	 */
 	public static String matchPattern(List<PPOcrV6Result> results, Predicate<String> predicate, boolean last) {
-		String hit = null;
+		return matchPatternWithBox(results, predicate, last).value();
+	}
+
+	/**
+	 * 用 Predicate 在 OCR 文本上筛选，返回首个/最后一个命中文本 + 值框。
+	 *
+	 * @param results   OCR 识别结果列表
+	 * @param predicate 文本命中判断
+	 * @param last      true=取最后一个命中；false=取首个命中
+	 * @return 命中文本 + 值框；无匹配时返回仅含 null value 的 LabeledMatch
+	 */
+	public static LabeledMatch matchPatternWithBox(List<PPOcrV6Result> results,
+													Predicate<String> predicate, boolean last) {
+		PPOcrV6Result hit = null;
 		for (PPOcrV6Result r : results) {
-			String text = r.text();
-			if (predicate.test(text)) {
-				hit = text;
+			if (predicate.test(r.text())) {
+				hit = r;
 				if (!last) break;
 			}
 		}
-		return hit;
+		return hit == null ? LabeledMatch.textOnly(null) : LabeledMatch.of(hit.text(), hit);
 	}
 
 	/**
@@ -348,6 +372,45 @@ public class LabelMatcher {
 	}
 
 	/**
+	 * 把匹配结果转成字段解析结果（值 + 取值来源 + OCR 置信度）。
+	 *
+	 * <p>OCR 置信度取自匹配到的首个值框；无值框时为 null（由置信度模型按来源给基线）。
+	 *
+	 * @param match  字段匹配结果，可为 null
+	 * @param source 取值来源
+	 * @return 字段解析结果
+	 */
+	public static ParsedField toParsedField(LabeledMatch match, FieldSource source) {
+		if (match == null) {
+			return ParsedField.missing();
+		}
+		Float score = null;
+		if (!match.matches().isEmpty()) {
+			PPOcrV6Result first = match.matches().get(0);
+			if (first != null) {
+				score = first.score();
+			}
+		}
+		return new ParsedField(match.value(), source, score);
+	}
+
+	/**
+	 * 把匹配结果转成字段解析结果（值可覆盖为从框文本中切出的值）。
+	 *
+	 * <p>用于"值需要二次裁剪"的场景（如合并框里切出 "男"、去掉尾随标签 "民族汉"）：
+	 * 框与 OCR 置信度沿用原匹配结果，只有值被替换。
+	 *
+	 * @param match  字段匹配结果，可为 null
+	 * @param source 取值来源
+	 * @param value  覆盖后的字段值
+	 * @return 字段解析结果
+	 */
+	public static ParsedField toParsedField(LabeledMatch match, FieldSource source, String value) {
+		ParsedField base = toParsedField(match, source);
+		return new ParsedField(value, base.source(), base.ocrScore());
+	}
+
+	/**
 	 * 辅助：把 {@link LabeledMatch} 回填到结构化结果的 fieldBoxes 中。
 	 *
 	 * @param result    结构化结果对象
@@ -373,13 +436,140 @@ public class LabelMatcher {
 	 * 在 OCR 结果中定位字段标签框，兼容 OCR 残缺场景。
 	 *
 	 * <p>匹配优先级：完整等于 &gt; 以 label 开头（最长）&gt; label 包含文本（最长）；
-	 * 前两者未命中时回退到第三种并打印 DEBUG 日志。
+	 * 三者全部落空时，依次回退到 {@link LabelAliases} 别名表与相邻片段拼接重建。
 	 *
 	 * @param results OCR 识别结果列表
 	 * @param label   字段标签（如 "号牌号码"）
 	 * @return 标签框对应的 OCR 结果；无匹配时返回 null
 	 */
 	public static PPOcrV6Result findLabelBox(List<PPOcrV6Result> results, String label) {
+		LabelHit hit = findLabelHit(results, label);
+		return hit == null ? null : hit.box();
+	}
+
+	/**
+	 * 定位字段标签框，并携带"命中方式"等附加信息。
+	 *
+	 * <p><b>三级回退 + 两级增强</b>：
+	 * <ol>
+	 *   <li><b>规范标签</b>：完整等于 &gt; 以 label 开头（标签与值合并成一框）；</li>
+	 *   <li><b>相邻片段拼接重建</b>：标签被 OCR 切成相邻多框（如"出生" + "日期"）时，
+	 *       按同行相邻关系拼回完整标签，并合成一个覆盖全部片段的标签框；</li>
+	 *   <li><b>规范标签 fragment 回退</b>：标签包含识别文本（如"所"之于"住所"）；</li>
+	 *   <li><b>别名兜底</b>（{@link LabelAliases}）：换标签写法后重走三级回退 ——
+	 *       覆盖"多字"（公民身份号码 → 公民身份证号码）、"带空格"（姓名 → 姓 名）、
+	 *       "换说法"（初次领证日期 → 初次领证年月日）三类 OCR 走样。</li>
+	 * </ol>
+	 *
+	 * <p>⚠️ <b>拼接重建必须排在 fragment 回退之前</b>：标签的片段天然是标签的子串，
+	 * fragment 回退一定会先命中单个碎片框，拼接层将永远触发不到。
+	 * 而拼接出的框覆盖整段标签，几何范围比单个碎片框更准 —— 用它定位右侧的值更可靠。
+	 *
+	 * @param results OCR 识别结果列表
+	 * @param label   字段标签
+	 * @return 标签命中信息；无匹配时返回 null
+	 */
+	public static LabelHit findLabelHit(List<PPOcrV6Result> results, String label) {
+		if (results == null || results.isEmpty() || label == null || label.isEmpty()) {
+			return null;
+		}
+		// 1) 规范标签：完整等于 / 以标签开头
+		LabelHit hit = findLabelExactOrPrefix(results, label);
+		if (hit != null) {
+			return hit;
+		}
+		// 2) 相邻同排片段拼接重建标签
+		hit = findLabelByJoining(results, label);
+		if (hit != null) {
+			return hit;
+		}
+		// 3) 规范标签：fragment 回退（OCR 残缺标签）
+		hit = findLabelFragment(results, label);
+		if (hit != null) {
+			return hit;
+		}
+		// 4) 别名兜底
+		if (LabelAliases.isEnabled()) {
+			for (String alias : LabelAliases.aliasesOf(label)) {
+				LabelHit aliasHit = findLabelStrict(results, alias);
+				if (aliasHit != null) {
+					log.debug("[DEBUG-FIND] label='{}' 命中别名 '{}'：text='{}'",
+						label, alias, aliasHit.box().text());
+					return new LabelHit(aliasHit.box(), alias, label, HitKind.ALIAS);
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 规范标签的"完整等于 / 以标签开头"定位。
+	 *
+	 * @param results OCR 识别结果列表
+	 * @param label   待匹配的标签文本
+	 * @return 命中信息；未命中返回 null
+	 */
+	private static LabelHit findLabelExactOrPrefix(List<PPOcrV6Result> results, String label) {
+		PPOcrV6Result exactBest = null;
+		PPOcrV6Result prefixBest = null;
+		int prefixBestLen = -1;
+		for (PPOcrV6Result r : results) {
+			String text = r.text();
+			if (text == null || text.isEmpty()) continue;
+			if (text.equals(label)) {
+				exactBest = r;
+			} else if (text.startsWith(label)) {
+				if (text.length() > prefixBestLen) {
+					prefixBestLen = text.length();
+					prefixBest = r;
+				}
+			}
+		}
+		if (exactBest != null) {
+			return new LabelHit(exactBest, label, label, HitKind.EXACT);
+		}
+		if (prefixBest != null) {
+			return new LabelHit(prefixBest, label, label, HitKind.PREFIX);
+		}
+		return null;
+	}
+
+	/**
+	 * 规范标签的 fragment 回退定位（标签包含识别文本，取最长的那个）。
+	 *
+	 * @param results OCR 识别结果列表
+	 * @param label   待匹配的标签文本
+	 * @return 命中信息；未命中返回 null
+	 */
+	private static LabelHit findLabelFragment(List<PPOcrV6Result> results, String label) {
+		PPOcrV6Result fragmentBest = null;
+		int fragmentBestLen = -1;
+		for (PPOcrV6Result r : results) {
+			String text = r.text();
+			if (text == null || text.isEmpty()) continue;
+			if (label.contains(text)) {
+				if (text.length() > fragmentBestLen) {
+					fragmentBestLen = text.length();
+					fragmentBest = r;
+				}
+			}
+		}
+		if (fragmentBest != null) {
+			log.debug("[DEBUG-FIND] label='{}' fragment hit: text='{}' (fragment len={})",
+				label, fragmentBest.text(), fragmentBestLen);
+			return new LabelHit(fragmentBest, label, label, HitKind.FRAGMENT);
+		}
+		return null;
+	}
+
+	/**
+	 * 规范标签的三级回退定位（完整等于 &gt; 以 label 开头 &gt; label 包含文本）。
+	 *
+	 * @param results OCR 识别结果列表
+	 * @param label   待匹配的标签文本
+	 * @return 命中信息；未命中返回 null
+	 */
+	private static LabelHit findLabelStrict(List<PPOcrV6Result> results, String label) {
 		PPOcrV6Result exactBest = null;
 		PPOcrV6Result prefixBest = null;
 		PPOcrV6Result fragmentBest = null;
@@ -387,7 +577,7 @@ public class LabelMatcher {
 		int fragmentBestLen = -1;
 		for (PPOcrV6Result r : results) {
 			String text = r.text();
-			if (text.isEmpty()) continue;
+			if (text == null || text.isEmpty()) continue;
 			if (text.equals(label)) {
 				exactBest = r;
 			} else if (text.startsWith(label)) {
@@ -402,12 +592,189 @@ public class LabelMatcher {
 				}
 			}
 		}
-		if (exactBest != null) return exactBest;
-		if (prefixBest != null) return prefixBest;
-		if (fragmentBest != null) {
-			log.debug("[DEBUG-FIND] label='{}' fragment hit: text='{}' (fragment len={})", label, fragmentBest.text(), fragmentBestLen);
+		if (exactBest != null) {
+			return new LabelHit(exactBest, label, label, HitKind.EXACT);
 		}
-		return fragmentBest;
+		if (prefixBest != null) {
+			return new LabelHit(prefixBest, label, label, HitKind.PREFIX);
+		}
+		if (fragmentBest != null) {
+			log.debug("[DEBUG-FIND] label='{}' fragment hit: text='{}' (fragment len={})",
+				label, fragmentBest.text(), fragmentBestLen);
+			return new LabelHit(fragmentBest, label, label, HitKind.FRAGMENT);
+		}
+		return null;
+	}
+
+	/**
+	 * 相邻同排片段拼接重建标签。
+	 *
+	 * <p><b>场景</b>：OCR 把"出生日期"切成两个独立框（"出生" / "日期"），
+	 * 三级回退完全失效（既非完整等于、也非前缀、也不是标签的子串）。
+	 * 本方法把同一行里<b>相邻</b>的片段按 x 顺序拼起来，拼出的文本恰好等于标签才认。
+	 *
+	 * <p><b>防误判</b>：
+	 * <ul>
+	 *   <li>片段必须是标签的真子串（否则拼不出标签）；</li>
+	 *   <li>片段必须同行（y 区间重叠过半）；</li>
+	 *   <li>片段必须横向相邻（间隙 ≤ 片段高度）；</li>
+	 *   <li>拼接结果必须<b>恰好等于</b>标签，不做模糊匹配。</li>
+	 * </ul>
+	 *
+	 * @param results OCR 识别结果列表
+	 * @param label   字段标签
+	 * @return 重建后的命中信息；无法重建返回 null
+	 */
+	private static LabelHit findLabelByJoining(List<PPOcrV6Result> results, String label) {
+		if (label.length() < 2) {
+			return null;
+		}
+		// 候选片段：标签的真子串
+		List<PPOcrV6Result> pieces = new ArrayList<>();
+		for (PPOcrV6Result r : results) {
+			String text = r.text();
+			if (text == null || text.isEmpty()) continue;
+			if (text.length() >= label.length()) continue;
+			if (!label.contains(text)) continue;
+			if (r.box() == null) continue;
+			pieces.add(r);
+		}
+		if (pieces.size() < 2) {
+			return null;
+		}
+		// 按行分组（y 区间重叠过半视为同行）
+		List<List<PPOcrV6Result>> rows = new ArrayList<>();
+		for (PPOcrV6Result p : pieces) {
+			List<PPOcrV6Result> row = null;
+			for (List<PPOcrV6Result> candidate : rows) {
+				if (sameRow(candidate.get(0), p)) {
+					row = candidate;
+					break;
+				}
+			}
+			if (row == null) {
+				row = new ArrayList<>();
+				rows.add(row);
+			}
+			row.add(p);
+		}
+		for (List<PPOcrV6Result> row : rows) {
+			row.sort(Comparator.comparingInt(LabelMatcher::minX));
+			LabelHit hit = joinRow(row, label);
+			if (hit != null) {
+				return hit;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 在同一行的片段序列中尝试拼接出完整标签。
+	 *
+	 * @param row   同一行的片段（按 x 升序）
+	 * @param label 目标标签
+	 * @return 重建后的命中信息；无法重建返回 null
+	 */
+	private static LabelHit joinRow(List<PPOcrV6Result> row, String label) {
+		int n = row.size();
+		for (int start = 0; start < n; start++) {
+			StringBuilder sb = new StringBuilder();
+			List<PPOcrV6Result> window = new ArrayList<>();
+			for (int end = start; end < n; end++) {
+				PPOcrV6Result piece = row.get(end);
+				if (!window.isEmpty() && !adjacent(window.get(window.size() - 1), piece)) {
+					// 与前一片段不相邻，后面的只会更远
+					break;
+				}
+				sb.append(piece.text());
+				window.add(piece);
+				if (sb.length() > label.length()) {
+					break;
+				}
+				if (sb.length() == label.length()) {
+					if (label.equals(sb.toString())) {
+						return buildJoinedHit(label, window);
+					}
+					break;
+				}
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 两个片段是否横向相邻（间隙不超过片段高度，容忍轻微倾斜与字距）。
+	 *
+	 * @param a 左片段
+	 * @param b 右片段
+	 * @return true 表示相邻
+	 */
+	private static boolean adjacent(PPOcrV6Result a, PPOcrV6Result b) {
+		int gap = minX(b) - maxX(a);
+		int tolerance = Math.max(height(a), height(b));
+		return gap <= tolerance;
+	}
+
+	/**
+	 * 两个框是否位于同一行（y 区间重叠过半）。
+	 *
+	 * @param a 框 A
+	 * @param b 框 B
+	 * @return true 表示同行
+	 */
+	private static boolean sameRow(PPOcrV6Result a, PPOcrV6Result b) {
+		int overlap = Math.min(maxY(a), maxY(b)) - Math.max(minY(a), minY(b));
+		int minHeight = Math.min(height(a), height(b));
+		if (minHeight <= 0) {
+			return Math.abs(centerY(a) - centerY(b)) <= 2;
+		}
+		return overlap * 2 >= minHeight;
+	}
+
+	/**
+	 * 取框的高度。
+	 *
+	 * @param r OCR 结果
+	 * @return 高度（像素）
+	 */
+	private static int height(PPOcrV6Result r) {
+		return maxY(r) - minY(r);
+	}
+
+	/**
+	 * 取框的垂直中心。
+	 *
+	 * @param r OCR 结果
+	 * @return 中心 y 坐标
+	 */
+	private static int centerY(PPOcrV6Result r) {
+		return (minY(r) + maxY(r)) / 2;
+	}
+
+	/**
+	 * 由多个片段合成一个覆盖全部片段的标签框。
+	 *
+	 * @param label  重建出的标签文本
+	 * @param window 参与拼接的片段
+	 * @return 重建后的命中信息
+	 */
+	private static LabelHit buildJoinedHit(String label, List<PPOcrV6Result> window) {
+		int minX = Integer.MAX_VALUE;
+		int minY = Integer.MAX_VALUE;
+		int maxX = Integer.MIN_VALUE;
+		int maxY = Integer.MIN_VALUE;
+		float score = Float.MAX_VALUE;
+		for (PPOcrV6Result r : window) {
+			minX = Math.min(minX, minX(r));
+			minY = Math.min(minY, minY(r));
+			maxX = Math.max(maxX, maxX(r));
+			maxY = Math.max(maxY, maxY(r));
+			score = Math.min(score, r.score());
+		}
+		int[][] box = {{minX, minY}, {maxX, minY}, {maxX, maxY}, {minX, maxY}};
+		PPOcrV6Result synthetic = new PPOcrV6Result(label, score, box);
+		log.debug("[DEBUG-FIND] label='{}' 由 {} 个相邻片段拼接重建", label, window.size());
+		return new LabelHit(synthetic, label, label, HitKind.JOINED);
 	}
 
 	// ==================================================================
@@ -475,8 +842,21 @@ public class LabelMatcher {
 		if (prefixBest != null) return prefixBest;
 		if (fragmentBest != null) {
 			log.debug("[DEBUG-FIND-CLEAN] label='{}' fragment hit: text='{}'", label, fragmentBest.text());
+			return fragmentBest;
 		}
-		return fragmentBest;
+		// 别名兜底：只接受"完整等于别名"的框，**不放开 fragment** ——
+		// fragment 是本方法存在的意义（拒绝被污染的碎片），放开就等于把过滤绕过。
+		if (LabelAliases.isEnabled()) {
+			for (String alias : LabelAliases.aliasesOf(label)) {
+				for (PPOcrV6Result r : results) {
+					if (alias.equals(r.text())) {
+						log.debug("[DEBUG-FIND-CLEAN] label='{}' 命中别名 '{}'", label, alias);
+						return r;
+					}
+				}
+			}
+		}
+		return null;
 	}
 
 	/**
@@ -857,6 +1237,37 @@ public class LabelMatcher {
 		 * 匹配到的 OCR 结果（含 box 坐标）
 		 */
 		List<PPOcrV6Result> matches;
+		/**
+		 * 命中状态：区分「找到标签没值」与「压根没这个标签」。
+		 *
+		 * @see LabelMatchStatus
+		 */
+		LabelMatchStatus status;
+
+		/**
+		 * 构造匹配结果。
+		 *
+		 * @param value   字段值
+		 * @param matches 值框列表
+		 * @param status  命中状态；null 视为 {@link LabelMatchStatus#NOT_FOUND}
+		 */
+		public LabeledMatch(String value, List<PPOcrV6Result> matches, LabelMatchStatus status) {
+			this.value = value;
+			this.matches = matches == null ? CollUtil.listOf() : matches;
+			this.status = status == null ? LabelMatchStatus.NOT_FOUND : status;
+		}
+
+		/**
+		 * 构造匹配结果（默认命中）。
+		 *
+		 * <p>保留该构造器以兼容既有调用方。
+		 *
+		 * @param value   字段值
+		 * @param matches 值框列表
+		 */
+		public LabeledMatch(String value, List<PPOcrV6Result> matches) {
+			this(value, matches, LabelMatchStatus.FOUND);
+		}
 
 		/**
 		 * 仅文本、无匹配框（兜底场景）。
@@ -865,7 +1276,21 @@ public class LabelMatcher {
 		 * @return 文本 LabeledMatch
 		 */
 		public static LabeledMatch textOnly(String value) {
-			return new LabeledMatch(value, CollUtil.listOf());
+			LabelMatchStatus status = (value == null || value.isEmpty())
+				? LabelMatchStatus.NOT_FOUND : LabelMatchStatus.FOUND;
+			return new LabeledMatch(value, CollUtil.listOf(), status);
+		}
+
+		/**
+		 * "找到标签但没取到值"的匹配结果。
+		 *
+		 * <p>与 {@link #textOnly(String)} 区分开：标签框确实存在，只是值没识别出来 ——
+		 * 这是 OCR 漏识别，值得人工复核，而不是"字段本来就不在图上"。
+		 *
+		 * @return 状态为 {@link LabelMatchStatus#LABEL_WITHOUT_VALUE} 的匹配结果
+		 */
+		public static LabeledMatch missingValue() {
+			return new LabeledMatch(null, CollUtil.listOf(), LabelMatchStatus.LABEL_WITHOUT_VALUE);
 		}
 
 		/**
@@ -876,7 +1301,8 @@ public class LabelMatcher {
 		 * @return 单值框 LabeledMatch
 		 */
 		public static LabeledMatch of(String value, PPOcrV6Result match) {
-			return new LabeledMatch(value, match == null ? CollUtil.listOf() : CollUtil.listOf(match));
+			return new LabeledMatch(value, match == null ? CollUtil.listOf() : CollUtil.listOf(match),
+				LabelMatchStatus.FOUND);
 		}
 
 		/**
@@ -887,7 +1313,8 @@ public class LabelMatcher {
 		 * @return 多值框 LabeledMatch
 		 */
 		public static LabeledMatch of(String value, List<PPOcrV6Result> matches) {
-			return new LabeledMatch(value, matches == null ? CollUtil.listOf() : CollUtil.unmodifiableList(matches));
+			return new LabeledMatch(value, matches == null ? CollUtil.listOf() : CollUtil.unmodifiableList(matches),
+				LabelMatchStatus.FOUND);
 		}
 
 		/**
@@ -898,6 +1325,71 @@ public class LabelMatcher {
 		public boolean hasValue() {
 			return value != null && !value.isEmpty();
 		}
+
+		/**
+		 * 是否"找到标签但没取到值"。
+		 *
+		 * <p>用于区分「字段本来就不在这张图上」与「OCR 漏识别了值」——
+		 * 前者正常，后者需要复核。
+		 *
+		 * @return true 表示标签在、值没识别出来
+		 */
+		public boolean labelWithoutValue() {
+			return status == LabelMatchStatus.LABEL_WITHOUT_VALUE;
+		}
+	}
+
+	/**
+	 * 标签命中方式。
+	 */
+	public enum HitKind {
+		/**
+		 * 完整等于标签。
+		 */
+		EXACT,
+		/**
+		 * 以标签开头（标签与值合并在同一框）。
+		 */
+		PREFIX,
+		/**
+		 * 标签的子串（OCR 残缺标签，如"所"之于"住所"）。
+		 */
+		FRAGMENT,
+		/**
+		 * 命中别名（见 {@link LabelAliases}）。
+		 */
+		ALIAS,
+		/**
+		 * 由相邻同排片段拼接重建。
+		 */
+		JOINED
+	}
+
+	/**
+	 * 标签命中信息：命中框 + 命中的标签文本 + 命中方式。
+	 *
+	 * <p>{@link #matchedLabel()} 是"实际用于匹配的标签文本" —— 别名命中时是别名，
+	 * 合并框剥值必须按它切，否则会把标签本身一起剥掉。
+	 */
+	@lombok.Value
+	@Accessors(fluent = true)
+	public static class LabelHit {
+		/**
+		 * 命中框（拼接重建时为合成框）。
+		 */
+		PPOcrV6Result box;
+		/**
+		 * 实际用于匹配的标签文本（规范标签或别名）。
+		 */
+		String matchedLabel;
+		/**
+		 * 调用方请求的规范标签。
+		 */
+		String canonicalLabel;
+		/**
+		 * 命中方式。
+		 */
+		HitKind kind;
 	}
 
 	/**

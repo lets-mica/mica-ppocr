@@ -20,7 +20,13 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.DateRepair;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParsedField;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ValidationResult;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -98,28 +104,33 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 	/**
 	 * 证号：标签定位（"证号"）+ 数字正则兜底。
 	 */
-	private static String parseLicenseNumber(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "证号");
-		if (labelValue != null && LICENSE_NUMBER_PATTERN.matcher(labelValue).matches()) {
-			return labelValue;
+	private static ParsedField parseLicenseNumber(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "证号");
+		if (labelValue.hasValue() && LICENSE_NUMBER_PATTERN.matcher(labelValue.value()).matches()) {
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
 		}
 		// 兜底：扫描所有数字串，取第一个 15~18 位的
-		String fallback = LabelMatcher.matchSubstring(results, text -> {
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchSubstringWithBox(results, text -> {
 			Matcher m = LICENSE_NUMBER_PATTERN.matcher(text.replace(" ", ""));
 			return m.find() ? m.group() : null;
 		});
-		if (fallback != null) {
-			log.debug("驾驶证解析：证号正则兜底命中 \"{}\"", fallback);
+		if (fallback.hasValue()) {
+			log.debug("驾驶证解析：证号正则兜底命中 \"{}\"", fallback.value());
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
 		}
-		return fallback;
+		return ParsedField.missing();
 	}
 
 	/**
 	 * 姓名：标签定位（独立"姓名"框 或 "姓名 Name"合并框）。
 	 */
-	private static String parseName(List<PPOcrV6Result> results) {
+	private static ParsedField parseName(List<PPOcrV6Result> results) {
 		// "姓名 Name" 合并框走 prefix 路径命中；"Name" 单字 fragment 不会命中（label="姓名"不含"Name"）
-		return LabelMatcher.matchValue(results, "姓名");
+		LabelMatcher.LabeledMatch match = LabelMatcher.matchValueWithBox(results, "姓名");
+		if (match.hasValue()) {
+			return LabelMatcher.toParsedField(match, FieldSource.LABEL);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
@@ -128,14 +139,14 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 	 * <p>过滤策略：值框不能是纯数字（避免误匹配到上方的证号框）、不能是纯英文（避免匹配到
 	 * 下方的 "Sex."）；值文本只保留"男"/"女"两个候选。
 	 */
-	private static String parseGender(List<PPOcrV6Result> results) {
+	private static ParsedField parseGender(List<PPOcrV6Result> results) {
 		PPOcrV6Result labelBox = LabelMatcher.findLabelBox(results, "性别");
 		if (labelBox != null) {
 			int labelCenterX = (LabelMatcher.minX(labelBox) + LabelMatcher.maxX(labelBox)) / 2;
 			int labelMinY = LabelMatcher.minY(labelBox);
 			int labelMaxY = LabelMatcher.maxY(labelBox);
 
-			String best = null;
+			PPOcrV6Result best = null;
 			int bestX = Integer.MAX_VALUE;
 			for (PPOcrV6Result r : results) {
 				if (r == labelBox) continue;
@@ -155,23 +166,26 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 				int x0 = LabelMatcher.minX(r);
 				if (x0 < bestX) {
 					bestX = x0;
-					best = text;
+					best = r;
 				}
 			}
 			if (best != null) {
-				Matcher m = GENDER_PATTERN.matcher(best);
-				if (m.find()) return m.group();
+				Matcher m = GENDER_PATTERN.matcher(best.text());
+				if (m.find()) {
+					return ParsedField.label(m.group(), best.score());
+				}
 			}
 		}
 		// 兜底：扫描所有文本框，找第一个含"男"/"女"的
-		String fallback = LabelMatcher.matchSubstring(results, text -> {
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchSubstringWithBox(results, text -> {
 			Matcher m = GENDER_PATTERN.matcher(text);
 			return m.find() ? m.group() : null;
 		});
-		if (fallback != null) {
-			log.debug("驾驶证解析：性别正则兜底命中 \"{}\"", fallback);
+		if (fallback.hasValue()) {
+			log.debug("驾驶证解析：性别正则兜底命中 \"{}\"", fallback.value());
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
 		}
-		return fallback;
+		return ParsedField.missing();
 	}
 
 	/**
@@ -336,48 +350,93 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 	/**
 	 * 出生日期：标签定位 + yyyy-MM-dd 正则兜底（取第一个匹配 — 出生日期通常在初次领证日期上方）。
 	 */
-	private static String parseBirthDate(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "出生日期");
-		// 轻微噪点清理（如 "2017-05-18." → 先去非数字/非"-"再抽取）
-		if (labelValue != null && !DATE_PATTERN.matcher(labelValue).matches()) {
-			String cleaned = labelValue.replaceAll("[^0-9\\-]", "");
-			Matcher m = DATE_PATTERN.matcher(cleaned);
-			if (m.find()) {
-				String extracted = m.group();
-				log.debug("驾驶证解析：出生日期从含噪文本 \"{}\" (清理后 \"{}\") 中抽取 \"{}\"",
-					labelValue, cleaned, extracted);
-				return extracted;
+	private static ParsedField parseBirthDate(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "出生日期");
+		if (labelValue.hasValue()) {
+			String repaired = repairDateText(labelValue.value(), "出生日期");
+			if (repaired != null) {
+				return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL, repaired);
 			}
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
 		}
-		return LabelMatcher.labelOrFallback(labelValue, results, DATE_PATTERN, "出生日期", false);
+		// 正则兜底（取第一个匹配 — 出生日期通常在初次领证日期上方）
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchPatternWithBox(results, DATE_PATTERN, false);
+		if (fallback.hasValue()) {
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
 	 * 初次领证日期：标签定位 + yyyy-MM-dd 正则兜底（取最后一个匹配 — 初次领证日期通常在出生日期下方）。
 	 */
-	private static String parseIssueDate(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "初次领证日期");
-		// 如果标签定位的文本接近日期格式（但有轻微噪点如 "2017-05-1.2"），
-		// 先去掉非数字/非"-"字符，再从中抽取日期（"1.2" → "12"）
-		if (labelValue != null && !DATE_PATTERN.matcher(labelValue).matches()) {
-			String cleaned = labelValue.replaceAll("[^0-9\\-]", "");
-			Matcher m = DATE_PATTERN.matcher(cleaned);
-			if (m.find()) {
-				String extracted = m.group();
-				log.debug("驾驶证解析：初次领证日期从含噪文本 \"{}\" (清理后 \"{}\") 中抽取 \"{}\"",
-					labelValue, cleaned, extracted);
-				return extracted;
+	private static ParsedField parseIssueDate(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "初次领证日期");
+		if (labelValue.hasValue()) {
+			String repaired = repairDateText(labelValue.value(), "初次领证日期");
+			if (repaired != null) {
+				return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL, repaired);
 			}
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
 		}
-		return LabelMatcher.labelOrFallback(labelValue, results, DATE_PATTERN, "初次领证日期", true);
+		// 正则兜底（取最后一个匹配 — 初次领证日期通常在出生日期下方）
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchPatternWithBox(results, DATE_PATTERN, true);
+		if (fallback.hasValue()) {
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
+		}
+		return ParsedField.missing();
+	}
+
+	/**
+	 * 日期文本修复：把被 OCR 弄乱分隔符的日期还原成 yyyy-MM-dd。
+	 *
+	 * <p>两条路径：
+	 * <ol>
+	 *   <li>轻微噪点（如 "2017-05-18." / "2017-05-1.2"）→ 去非数字非"-"字符后重抽；</li>
+	 *   <li>分隔符被认成数字（如 "2015-0518"）→ 按纯数字重排还原（{@link DateRepair}）。</li>
+	 * </ol>
+	 *
+	 * @param text      原始日期文本
+	 * @param fieldName 字段名（日志用）
+	 * @return 修复后的日期；无需修复或无法修复时返回 null（调用方沿用原值）
+	 */
+	private static String repairDateText(String text, String fieldName) {
+		if (text == null || text.isEmpty()) {
+			return null;
+		}
+		if (DATE_PATTERN.matcher(text).matches()) {
+			return null;
+		}
+		// 路径 1：轻微噪点清理
+		String cleaned = text.replaceAll("[^0-9\\-]", "");
+		Matcher m = DATE_PATTERN.matcher(cleaned);
+		if (m.find()) {
+			String extracted = m.group();
+			log.debug("驾驶证解析：{}从含噪文本 \"{}\" (清理后 \"{}\") 中抽取 \"{}\"",
+				fieldName, text, cleaned, extracted);
+			return extracted;
+		}
+		// 路径 2：分隔符被认成数字 → 纯数字重排
+		String repaired = DateRepair.repairDate(text);
+		if (repaired != null) {
+			log.debug("驾驶证解析：{}由 \"{}\" 修复为 \"{}\"", fieldName, text, repaired);
+		}
+		return repaired;
 	}
 
 	/**
 	 * 准驾车型：标签定位 + 短大写正则兜底。
 	 */
-	private static String parseVehicleClass(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "准驾车型");
-		return LabelMatcher.labelOrFallback(labelValue, results, VEHICLE_CLASS_PATTERN, "准驾车型", false);
+	private static ParsedField parseVehicleClass(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "准驾车型");
+		if (labelValue.hasValue() && VEHICLE_CLASS_PATTERN.matcher(labelValue.value()).matches()) {
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
+		}
+		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchPatternWithBox(results, VEHICLE_CLASS_PATTERN, false);
+		if (fallback.hasValue()) {
+			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
+		}
+		return ParsedField.missing();
 	}
 
 	/**
@@ -476,6 +535,13 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 			Matcher m = DATE_PATTERN.matcher(parts[i]);
 			if (m.find()) {
 				parts[i] = m.group();
+			} else {
+				// 分隔符被 OCR 认成数字（如 "2017-0512"）→ 纯数字重排还原
+				String repaired = DateRepair.repairDate(parts[i]);
+				if (repaired != null) {
+					log.debug("驾驶证解析：有效期限由 \"{}\" 修复为 \"{}\"", parts[i], repaired);
+					parts[i] = repaired;
+				}
 			}
 		}
 		if (parts.length == 2) {
@@ -489,19 +555,63 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 	public DriverLicenseResult parseResults(List<PPOcrV6Result> results) {
 		DriverLicenseResult r = new DriverLicenseResult();
 		r.setRawResults(new ArrayList<>(results));
-		r.setLicenseNumber(parseLicenseNumber(results));
-		r.setName(parseName(results));
-		r.setGender(parseGender(results));
-		r.setNationality(parseNationality(results));
-		r.setAddress(parseAddress(results));
-		r.setBirthDate(parseBirthDate(results));
-		r.setIssueDate(parseIssueDate(results));
-		r.setVehicleClass(parseVehicleClass(results));
-		r.setIssuingAuthority(parseIssuingAuthority(results));
+
+		ParsedField licenseNumber = parseLicenseNumber(results);
+		ParsedField name = parseName(results);
+		ParsedField gender = parseGender(results);
+		// 性别回填：驾驶证"证号"就是公民身份号码，其性别位（倒数第二位）能救回被 OCR 糊掉的性别
+		if (!gender.hasValue() && licenseNumber.hasValue()) {
+			String backfilled = Validations.genderFromIdNumber(licenseNumber.value());
+			if (backfilled != null) {
+				log.debug("驾驶证解析：性别由证号回填为 \"{}\"", backfilled);
+				gender = ParsedField.backfill(backfilled);
+			}
+		}
+		String nationality = parseNationality(results);
+		String address = parseAddress(results);
+		ParsedField birthDate = parseBirthDate(results);
+		ParsedField issueDate = parseIssueDate(results);
+		ParsedField vehicleClass = parseVehicleClass(results);
+		String issuingAuthority = parseIssuingAuthority(results);
 		String[] period = parseValidPeriod(results);
+
+		r.setLicenseNumber(licenseNumber.value());
+		r.setName(name.value());
+		r.setGender(gender.value());
+		r.setNationality(nationality);
+		r.setAddress(address);
+		r.setBirthDate(birthDate.value());
+		r.setIssueDate(issueDate.value());
+		r.setVehicleClass(vehicleClass.value());
+		r.setIssuingAuthority(issuingAuthority);
 		if (period != null) {
 			r.setValidFrom(period[0]);
 			r.setValidTo(period[1]);
+		}
+
+		// —— 正确性层：证号走 GB 11643 校验位 + 字段级置信度 ——
+		// 驾驶证证号即公民身份号码，校验不过 = 至少认错了一个字符。
+		ValidationResult licenseValidation = Validations.validateIdCard(licenseNumber.value());
+		if (licenseValidation.mismatched()) {
+			log.warn("驾驶证解析：{}", licenseValidation.message());
+		}
+		r.putFieldConfidence(FieldConfidence.of("licenseNumber", licenseNumber, licenseValidation));
+		r.putFieldConfidence(FieldConfidence.of("name", name, null));
+		r.putFieldConfidence(FieldConfidence.of("gender", gender, null));
+		r.putFieldConfidence(FieldConfidence.of("nationality",
+			ParsedField.label(nationality, null), null));
+		r.putFieldConfidence(FieldConfidence.of("address",
+			ParsedField.label(address, null), null));
+		r.putFieldConfidence(FieldConfidence.of("birthDate", birthDate, null));
+		r.putFieldConfidence(FieldConfidence.of("issueDate", issueDate, null));
+		r.putFieldConfidence(FieldConfidence.of("vehicleClass", vehicleClass, null));
+		r.putFieldConfidence(FieldConfidence.of("issuingAuthority",
+			ParsedField.label(issuingAuthority, null), null));
+		if (period != null) {
+			r.putFieldConfidence(FieldConfidence.of("validFrom",
+				ParsedField.label(period[0], null), null));
+			r.putFieldConfidence(FieldConfidence.of("validTo",
+				ParsedField.label(period[1], null), null));
 		}
 		return r;
 	}

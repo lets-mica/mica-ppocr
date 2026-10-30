@@ -20,8 +20,14 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.DateRepair;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher.LabeledMatch;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParsedField;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.ValidationResult;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -948,7 +954,7 @@ public class BusinessLicenseParser extends BaseStructuredParser<BusinessLicenseR
 		if (!establishMatch.hasValue()) {
 			establishMatch = LabelMatcher.matchValueWithBox(results, LABEL_ESTABLISH_DATE);
 		}
-		license.setEstablishDate(establishMatch.value());
+		license.setEstablishDate(repairEstablishDate(establishMatch.value()));
 		LabelMatcher.applyFieldBox(license, "establishDate", establishMatch);
 
 		// 7. 有效日期至
@@ -962,6 +968,54 @@ public class BusinessLicenseParser extends BaseStructuredParser<BusinessLicenseR
 		// 9. 经营范围（跨多行）
 		license.setBusinessScope(parseBusinessScope(results));
 
+		// —— 正确性层：GB 32100 校验位 + 字段级置信度 ——
+		// 统一社会信用代码校验不过 = 至少认错了一个字符，置信度直接归零并标记需复核。
+		ValidationResult creditValidation = Validations.validateCreditCode(creditMatch.value());
+		if (creditValidation.mismatched()) {
+			log.warn("营业执照解析：{}", creditValidation.message());
+		}
+		license.putFieldConfidence(FieldConfidence.of("creditCode",
+			LabelMatcher.toParsedField(creditMatch, FieldSource.LABEL), creditValidation));
+		license.putFieldConfidence(FieldConfidence.of("name",
+			LabelMatcher.toParsedField(nameMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("type",
+			LabelMatcher.toParsedField(typeMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("legalPerson",
+			LabelMatcher.toParsedField(legalMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("registeredCapital",
+			LabelMatcher.toParsedField(capitalMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("establishDate",
+			LabelMatcher.toParsedField(establishMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("operatingPeriod",
+			LabelMatcher.toParsedField(periodMatch, FieldSource.LABEL), null));
+		license.putFieldConfidence(FieldConfidence.of("address",
+			ParsedField.label(license.getAddress(), null), null));
+		license.putFieldConfidence(FieldConfidence.of("businessScope",
+			ParsedField.label(license.getBusinessScope(), null), null));
+
 		return license;
+	}
+
+	/**
+	 * 成立日期修复：分隔符被 OCR 弄乱时（如 "2020-0518"）按纯数字重排还原。
+	 *
+	 * <p>格式本来就正常时原样返回，不改变既有输出。
+	 *
+	 * @param rawDate 原始成立日期文本
+	 * @return 修复后的日期；无法修复时返回原值
+	 */
+	private static String repairEstablishDate(String rawDate) {
+		if (rawDate == null || rawDate.isEmpty()) {
+			return rawDate;
+		}
+		if (DATE_PATTERN.matcher(rawDate).matches()) {
+			return rawDate;
+		}
+		String repaired = DateRepair.repairDate(rawDate);
+		if (repaired != null) {
+			log.debug("营业执照解析：成立日期由 \"{}\" 修复为 \"{}\"", rawDate, repaired);
+			return repaired;
+		}
+		return rawDate;
 	}
 }

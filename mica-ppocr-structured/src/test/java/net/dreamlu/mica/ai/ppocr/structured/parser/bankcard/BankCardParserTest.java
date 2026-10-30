@@ -17,14 +17,15 @@
 package net.dreamlu.mica.ai.ppocr.structured.parser.bankcard;
 
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParserTestSupport;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 银行卡解析器单元测试。
@@ -107,5 +108,63 @@ class BankCardParserTest extends ParserTestSupport {
 		// 所有字段为 null
 		assertEquals(null, r.getCardNumber());
 		assertEquals(null, r.getValidDate());
+	}
+
+	// ==================================================================
+	// 正确性层：Luhn 校验 + 字段级置信度
+	// ==================================================================
+
+	/**
+	 * 构造一张标准版式的银行卡 OCR 框。
+	 *
+	 * @param cardNumber 卡号（带 4-4-4-4 空格分隔）
+	 * @return OCR 框列表
+	 */
+	private static List<PPOcrV6Result> buildCardOcr(String cardNumber) {
+		return CollUtil.listOf(
+			box("ICBC", 50, 60, 130, 90),
+			box("中国工商银行", 160, 60, 350, 90),
+			box("GOLD", 360, 60, 420, 90),
+			box("CREDIT", 60, 130, 140, 160),
+			box(cardNumber, 90, 290, 700, 360),
+			box("月/年", 200, 380, 240, 400),
+			box("07/22", 290, 380, 360, 400),
+			box("MR.CWENTA", 90, 430, 230, 460)
+		);
+	}
+
+	@Test
+	void parse_cardNumberLuhnValid_confidenceKept() {
+		// 4111111111111111 是公开的 Luhn 校验样例卡号
+		BankCardResult r = parse(new BankCardParser(null), buildCardOcr("4111 1111 1111 1111"));
+		assertEquals("4111111111111111", r.getCardNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("cardNumber");
+		assertNotNull(fc);
+		assertTrue(fc.score() > 0);
+		assertTrue(fc.violations().isEmpty());
+		assertFalse(r.isNeedsReview());
+	}
+
+	@Test
+	void parse_cardNumberSource_isPatternNotLabel() {
+		// 卡号是「内容正则」抽出来的（不是标签定位）⇒ 来源必须记 PATTERN，
+		// 否则会白拿标签定位的置信度、虚高约 11%。
+		BankCardResult r = parse(new BankCardParser(null), buildCardOcr("4111 1111 1111 1111"));
+		FieldConfidence fc = r.getFieldConfidences().get("cardNumber");
+		assertEquals(FieldSource.PATTERN, fc.source());
+		assertEquals(0.9d, fc.score(), 1e-6, "PATTERN 路径应吃 0.9 折扣");
+	}
+
+	@Test
+	void parse_cardNumberLuhnInvalid_scoreZeroAndNeedsReview() {		// 末位改成 2 → Luhn 不通过 ⇒ 至少认错了一个数字
+		BankCardResult r = parse(new BankCardParser(null), buildCardOcr("4111 1111 1111 1112"));
+		// 值仍要保留
+		assertEquals("4111111111111112", r.getCardNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("cardNumber");
+		assertNotNull(fc);
+		assertEquals(0d, fc.score(), 1e-9);
+		assertFalse(fc.violations().isEmpty());
+		assertTrue(fc.needsReview());
+		assertTrue(r.isNeedsReview());
 	}
 }
