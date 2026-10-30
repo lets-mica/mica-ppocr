@@ -34,15 +34,14 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	/**
 	 * 是否启用该 Starter。默认 true：启用时必填的 det/rec 模型路径及字典缺失将启动失败。
 	 *
-	 * <p>设为 false 时的行为<b>两端不一致</b>：
-	 * <ul>
-	 *   <li>Solon 插件：正确跳过全部 Bean 装配。</li>
-	 *   <li>Spring Boot Starter：<b>存在已知缺陷</b> —— {@code StructuredParserAutoConfiguration}
-	 *       未挂 {@code enabled} 闸门，10 个解析器 Bean 仍会被注册，但拿不到
-	 *       {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine}，导致容器 refresh 失败
-	 *       （{@code NoSuchBeanDefinitionException}）。规避方式：把 {@code mica-ppocr-structured}
-	 *       一并移出 classpath。</li>
-	 * </ul>
+	 * <p>设为 false 时<b>两端行为一致</b>：{@code PPOCRAutoConfiguration} /
+	 * {@code PdfAutoConfiguration} / {@code StructuredParserAutoConfiguration}
+	 * 三个配置类整体不生效，容器里不会注册任何 PP-OCR 功能 Bean
+	 * （引擎 / 10 个解析器 / 模板 / 配置对象），应用照常启动。
+	 *
+	 * <p>⚠️ OpenCV 原生库由 {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine} 构造期加载，
+	 * 开关关闭时引擎 Bean 缺席 ⇒ <b>OpenCV 也不会加载</b>，业务方自行使用 {@code org.opencv.*}
+	 * 需自行 {@code nu.pattern.OpenCV.loadLocally()}。
 	 */
 	private boolean enabled = true;
 
