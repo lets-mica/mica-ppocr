@@ -28,6 +28,18 @@ When changing numeric logic, verify against the Python implementation rather tha
 - **IO API**（Java 9/11+）：不要用 `InputStream.readAllBytes` / `Files.writeString` / `Path.of` / `Stream.toList`，
   统一用 `CollUtil.readAllBytes/writeString/pathOf/toList`
 
+- **单字符字面量**：单个字符用 char 字面量 `'-'`，不要写字符串字面量 `"-"`（分隔符拼接处尤其明显）。
+  三个必须绕开的坑：
+  - **左侧是数字时不能换** —— `int + '-' + int` 会从字符串拼接变成**数值加法**。
+    例 `resizeShort + "/" + cropSize`（`resizeShort` 是 `int`）必须保持 `"/"`；
+  - **删除类 replace 不能换** —— Java 没有空字符字面量，`replace(' ', '')` 是**语法错误**，
+    `replace(" ", "")` 必须保持字符串版；`replace(c1, c2)` 只在两参数都是非空字符时才可用；
+  - **左侧是泛型类型变量时不能换** —— `K + '='` 编译器无法判定是算术还是拼接，直接报
+    "运算符 '+' 的类型不明确"；`K + "="` 才安全（String 操作数决定走 `String.valueOf`）；
+  - **API 收 `String`/`CharSequence` 的不能换** —— `contains`/`split`/`matches`/`startsWith`/`endsWith`/
+    `indexOf`/`replaceAll`/`Pattern.compile` 的参数，以及 `Set<String>` 的元素、`assertEquals("X", ...)`、
+    `box("1", ...)` 这类按字面量比对的调用，一律保持字符串字面量。
+
 - **编译参数**：`maven.compiler.release` 故意不设置。Lombok 1.18.x + JDK 17+ 在 `release 1.8`
   下会触发"不支持发行版本 1.8"；用 `-source/-target` 时若保留 `release` 也会踩坑。
   且**不要在无** **`--release`** **情况下混用 Java 11+ API**——`javac` 会用 JDK 17 rt.jar 解析，编译通过但
@@ -67,12 +79,12 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       │   ├── LabelAliases.java           ← 标签别名表（规范标签 → OCR 认错的写法）
 │       │   └── DateRepair.java             ← 日期修复（分隔符被认错时还原 yyyy-MM-dd）
 │       ├── generic/                       ← 通用解析器（声明式 schema 入口，与存量 10 个强类型 parser 并行）
-│       │   ├── ExtractionSchema.java       ← 声明式 schema（字段名 / 标签 / 正则 / 规则 / 归一化）
-│       │   ├── GenericParser.java          ← 通用解析器（extends BaseStructuredParser）
-│       │   ├── GenericResult.java          ← 通用结果（extends BaseStructuredResult）
+│       │   ├── OcrFieldSchema.java         ← 声明式 schema（字段名 / 标签 / 正则 / 规则 / 归一化）
+│       │   ├── OcrStructuredParser.java    ← 通用解析器（extends BaseStructuredParser）
+│       │   ├── OcrStructuredResult.java    ← 通用结果（extends BaseStructuredResult）
 │       │   ├── FieldSpec.java              ← 单字段声明
 │       │   ├── FieldRule.java              ← 字段校验规则（复用 Validations）
-│       │   ├── Normalizer.java             ← 值归一化（NONE / DIGITS / COMPACT / DATE）
+│       │   ├── ValueNormalizer.java        ← 值归一化（NONE / DIGITS / COMPACT / DATE）
 │       │   └── ValueLocator.java           ← 值定位（值归属最近标签 + 垂直重叠率 + 间距上限）
 │       ├── vehicle/     ← 行驶证          ├── idcard/      ← 身份证
 │       ├── bankcard/    ← 银行卡          ├── driver/      ← 机动车驾驶证
@@ -150,7 +162,8 @@ CLI 默认使用 `--tier tiny`；可用 `--tier small|medium` 切换，或用 `-
 
 - 词典中间有一行 **U+3000 全角空格**（tiny 第 777 行、small/medium 第 620 行），是 CJK 空格 token。
 - 词典**最后一行是 ASCII 空格**（PaddleOCR `use_space_char` 约定：模型最后一个输出类 = 追加的空格，
-  `onnx vocab = dict 行数 + blank + space`，如 tiny=7180、small/medium=18714）。
+  `onnx vocab = dict 行数 + 1`（那个 +1 就是 blank），如 tiny=7180、small/medium=18714 ——
+  实测 dict 行数为 tiny 7179 / small·medium 18713，`CtcLabelDecoder.parseLines` 先 `add("blank")` 再逐行加入）。
 - 这两行都是"纯空白行"，任何 `strip`/`rstrip` 处理词典都会把它们抹掉，导致识别结果丢空格、英文单词粘连。
   `CtcLabelDecoder` 已按 Python 参考实现对齐（仅剥 `\n\r`，有回归测试锁定）；重新从 `inference.yml`
   导出词典时必须保留这两个 token（`model-tools/ppocr/convert.py` 已处理）。
@@ -462,19 +475,19 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   调用方也可直接 `new XxxParser(engine).parse(bytes)` 一站式调用。
 
 - **通用解析器**（`generic/`，v1.2.5 起）— **声明式 schema 入口**，与上面 10 个强类型 parser
-  **并行存在**（不替换、不迁移存量 API）。新增单据类型写一份 `ExtractionSchema` 即可抽取字段，
+  **并行存在**（不替换、不迁移存量 API）。新增单据类型写一份 `OcrFieldSchema` 即可抽取字段，
   无需再实现一个解析器类。
 
-  - `ExtractionSchema.builder("采购合同").field("contractNo").labels("合同编号", "合同号")
+  - `OcrFieldSchema.builder("采购合同").field("contractNo").labels("合同编号", "合同号")
     .compact().add().build()` —— 每个字段可声明：标签列表（首个为规范标签，其余为别名）、
     内容正则（全匹配语义）、校验规则、归一化方式、是否可选。
   - `FieldRule` 内置 `digits(n)` / `length(min,max)` / `date()` / `idCardNumber()` / `bankCardNumber()` /
     `creditCode()` / `of(name, predicate)`；身份证 / 银行卡 / 信用代码三类**直接委托 `Validations`**，
     与存量解析器共用同一套校验位实现，不存在两套口径。
-  - `Normalizer`：`NONE` / `DIGITS` / `COMPACT` / `DATE`。
+  - `ValueNormalizer`：`NONE` / `DIGITS` / `COMPACT` / `DATE`。
     ⚠️ **归一化在"取值之后、校验之前"执行** —— 调用方拿到的值与规则判定依据的值永远是同一个。
     ⚠️ 身份证号请用 `COMPACT`（保留末位 `X`），**不要用 `DIGITS`**（会把 `X` 丢掉）。
-  - `GenericResult`：`values`（字段名 → 值）/ `missingFields` / 继承来的 `fieldConfidences` /
+  - `OcrStructuredResult`：`values`（字段名 → 值）/ `missingFields` / 继承来的 `fieldConfidences` /
     `needsReview` / `reviewReasons` / `fieldBoxes`；另有 `allTrusted()` 与 `getNeedingReviewFields()`。
   - **取值路径**（按优先级）：标签定位 → 合并框剥值 → 内容正则兜底 → 字段缺失。
     标签路径取到的值不符合 schema 正则时改走正则兜底；正则也兜不到就**保留标签值**，
