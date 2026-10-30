@@ -5,11 +5,8 @@
 [![Mica Maven release](https://img.shields.io/maven-central/v/net.dreamlu/mica-ppocr-core.svg?style=flat-square)](https://central.sonatype.com/artifact/net.dreamlu/mica-ppocr-core/versions)
 ![Mica Maven SNAPSHOT](https://img.shields.io/maven-metadata/v?metadataUrl=https://central.sonatype.com/repository/maven-snapshots/net/dreamlu/mica-ppocr-core/maven-metadata.xml)
 
-> - PP-OCRv6 文字检测 + 识别的 **Java** 实现，纯 ONNX Runtime 推理，
-> - **零 PaddlePaddle 依赖**。完整复现预处理 / 后处理（DB 后处理、CTC 解码、
+> - PP-OCRv6 文字检测 + 识别的 **Java** 实现，纯 ONNX Runtime 推理，**零 PaddlePaddle 依赖**。
 > - doc_ori 文档方向分类模型，支持（4 类：0°/90°/180°/270°）在检测前对整图做方向校正，避免用户侧倒拍/横拍导致识别失败。
-
-移植自 [`AIwork4me/ppocrv6_onnx`](https://github.com/AIwork4me/ppocrv6_onnx) 的 `ppocrv6_onnx.py` 单文件参考实现，**与 Python 版本保持 bit-exact**（默认 CPU 单线程）。
 
 [✨✨✨推广：**BladeX 物联网平台**✨✨✨iot.bladex.cn](https://iot.bladex.cn?from=mica-mqtt)
 
@@ -21,7 +18,6 @@
 |------|------|
 | 文字检测 + 识别 | PP-OCRv6 det + rec，完整复现 DB 后处理 / CTC 贪心解码 |
 | 零 Paddle 依赖 | 纯 ONNX Runtime 推理，Java 8 兼容，Windows / Linux / macOS 原生库随 Maven 引入 |
-| bit-exact | 与 Python 参考实现逐位一致（默认 CPU 单线程，保证跨平台确定性） |
 | 结构化解析 | 行驶证 / 身份证 / 银行卡 / 驾驶证 / 营业执照 / 发票 / 火车票 / 出租车票 / 户口本 / 拼多多福袋 共 10 类 |
 | 声明式 schema | 新增单据类型写一份 schema 即可抽字段，无需再实现解析器类 |
 | PDF 双通道 | 文字型 PDF 直接抽文本层，扫描件自动降级为渲染 + OCR |
