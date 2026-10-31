@@ -2,7 +2,7 @@
 
 ## 发行版本
 
-### 未发布
+### v1.2.5 - 2026-11-01
 - feat(structured): 新增通用解析器（声明式 schema 入口）。`structured/parser/generic/` 提供 `OcrFieldSchema` / `OcrStructuredParser` / `OcrStructuredResult` / `FieldSpec` / `FieldRule` / `ValueNormalizer` / `ValueLocator` 共 7 个类，新增单据类型写一份 schema 即可抽取字段、无需再实现解析器类，与存量 10 个强类型 parser 并行存在；取值走「标签定位 → 合并框剥值 → 正则兜底」，校验位与字段置信度复用 `Validations` / `FieldConfidence`，Spring Boot / Solon `PPOcrTemplate` 同步新增 `generic(schema)`。
 - feat(structured): 补齐「正确性」层 —— 结构化结果新增字段级置信度与人工复核出口：`BaseStructuredResult` 新增 `fieldConfidences` / `needsReview` / `reviewReasons`；新增 `core/Validations.java` 提供 GB 11643 / Luhn / GB 32100 三套校验位（`PASS` / `FAIL` / `UNCHECKABLE` 三态），已接入身份证、银行卡、营业执照、驾驶证四个解析器。**校验不通过时置信度直接归零（不是打折）**，但**字段值仍然保留** —— 丢值会让下游比现在更糟；「字段缺失」也不等于「值不可信」，是否复核由解析器按版面预期显式标记。
 - feat(structured): **证件号回填性别** —— 身份证号与驾驶证证号的倒数第二位即性别位（奇男偶女）。OCR 把"性别"整块漏识别时，号码本身能救回性别（`FieldSource.BACKFILL`），比直接留 null 有用得多。18 位取第 17 位、15 位旧证取末位。
