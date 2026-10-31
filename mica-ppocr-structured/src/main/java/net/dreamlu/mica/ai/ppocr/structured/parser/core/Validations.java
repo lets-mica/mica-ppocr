@@ -18,6 +18,8 @@ package net.dreamlu.mica.ai.ppocr.structured.parser.core;
 
 import lombok.experimental.UtilityClass;
 
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.util.Locale;
 
 /**
@@ -137,6 +139,12 @@ public class Validations {
 	 * <p>算法：从右往左逐位累加，奇数位（自右起第 1、3、5…位）先乘 2，
 	 * 超过 9 则减 9（等价于「乘 2 后取个位与十位之和」），总和能被 10 整除即通过。
 	 *
+	 * <p><b>形态前置校验</b>：Luhn 对「各位数字相同」的串会误判为通过 ——
+	 * 全零串（{@code 000000000000000000}）加权和恰为 0，{@code 0 % 10 == 0} 成立。
+	 * 而真实卡号不可能所有位相同。这类串多为票据上的<b>占位符</b>或 OCR 把整串认成同一个数字，
+	 * 属于「确定不是有效卡号」，故判 {@link ValidationStatus#FAIL}（而非 UNCHECKABLE）——
+	 * 只有 FAIL 会让 {@link FieldConfidence} 把该字段置信度归零并置位人工复核。
+	 *
 	 * <p>卡号本身不携带校验位字符，故 {@code actual} / {@code expected} 均为 null。
 	 *
 	 * @param cardNumber 卡号（可含空格、短横线等分隔符，会被忽略）
@@ -150,6 +158,13 @@ public class Validations {
 		if (digits.length() < 12 || digits.length() > 19) {
 			return ValidationResult.uncheckable(RULE_BANK_CARD,
 				"卡号长度应为 12~19 位，实际 " + digits.length() + " 位");
+		}
+		// 形态校验：各位数字全同（如全零占位符）不是合法卡号。
+		// Luhn 本身抓不到（0 的加权和恒为 0，必然"通过"），必须在此前置拦掉。
+		if (isAllSameDigit(digits)) {
+			return ValidationResult.fail(RULE_BANK_CARD, null, null,
+				"卡号各位数字全为 " + digits.charAt(0) + "（共 " + digits.length()
+					+ " 位），不是有效卡号（票据占位符或整串识别错误）");
 		}
 		int sum = 0;
 		boolean doubleDigit = false;
@@ -169,6 +184,25 @@ public class Validations {
 		}
 		return ValidationResult.fail(RULE_BANK_CARD, null, null,
 			"卡号 Luhn 校验不通过（各位加权和不满足 mod 10 == 0，OCR 至少认错了一个数字）");
+	}
+
+	/**
+	 * 判断数字串是否所有位都相同（覆盖全零占位符、全一同码等）。
+	 *
+	 * @param digits 纯数字串（长度 ≥ 1）
+	 * @return true 表示所有位相同
+	 */
+	private static boolean isAllSameDigit(String digits) {
+		if (digits == null || digits.length() <= 1) {
+			return false;
+		}
+		char first = digits.charAt(0);
+		for (int i = 1; i < digits.length(); i++) {
+			if (digits.charAt(i) != first) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	/**
@@ -280,8 +314,13 @@ public class Validations {
 	 *
 	 * <p>18 位取第 7~14 位（YYYYMMDD）；15 位取第 7~12 位（YYMMDD，年份按 19YY 补全）。
 	 *
+	 * <p><b>日期合法性校验</b>：号码被 OCR 认错时，出生日期段可能拼出「13 月」「32 日」这类
+	 * 非法日期。此处用 {@link LocalDate#of(int, int, int)} 校验月份范围、当月天数与闰年规则，
+	 * 非法则返回 {@code null} —— <b>宁可不给日期，也不给一个假日期</b>。
+	 * （与 {@link DateRepair} 的日期组装逻辑保持一致）
+	 *
 	 * @param idNumber 15 位或 18 位身份证号
-	 * @return {@code yyyy-MM-dd}；号码长度不符时返回 null
+	 * @return {@code yyyy-MM-dd}；号码长度不符或日期非法时返回 null
 	 */
 	public static String birthDateFromIdNumber(String idNumber) {
 		if (idNumber == null) {
@@ -289,11 +328,60 @@ public class Validations {
 		}
 		String s = idNumber.trim();
 		if (s.length() == 18) {
-			return s.substring(6, 10) + '-' + s.substring(10, 12) + '-' + s.substring(12, 14);
+			return formatBirthDate(s.substring(6, 10), s.substring(10, 12), s.substring(12, 14));
 		}
 		if (s.length() == 15) {
-			return "19" + s.substring(6, 8) + '-' + s.substring(8, 10) + '-' + s.substring(10, 12);
+			// 15 位 YY 按 19YY 补全（早期 15 位身份证号均为 19XX 年签发）
+			return formatBirthDate("19" + s.substring(6, 8), s.substring(8, 10), s.substring(10, 12));
 		}
 		return null;
+	}
+
+	/**
+	 * 组装并校验 {@code yyyy-MM-dd} 出生日期。
+	 *
+	 * <p>复用 {@link DateRepair} 的组装口径：{@link LocalDate#of(int, int, int)} 会校验
+	 * 月份范围、当月天数与闰年规则，非法日期一律返回 {@code null}。
+	 *
+	 * @param year  年（4 位字符串）
+	 * @param month 月（2 位字符串）
+	 * @param day   日（2 位字符串）
+	 * @return 合法则返回 {@code yyyy-MM-dd}，否则返回 null
+	 */
+	private static String formatBirthDate(String year, String month, String day) {
+		int y = parseDigits(year);
+		int m = parseDigits(month);
+		int d = parseDigits(day);
+		if (y < 0 || m < 0 || d < 0) {
+			return null;
+		}
+		try {
+			// LocalDate.of 会校验月份范围、当月天数与闰年规则
+			LocalDate.of(y, m, d);
+		} catch (DateTimeException e) {
+			return null;
+		}
+		return String.format(Locale.ROOT, "%04d-%02d-%02d", y, m, d);
+	}
+
+	/**
+	 * 解析数字字符串，非法返回 -1。
+	 *
+	 * @param s 数字字符串
+	 * @return 数值；含非数字字符或为空时返回 -1
+	 */
+	private static int parseDigits(String s) {
+		if (s == null || s.isEmpty() || s.length() > 4) {
+			return -1;
+		}
+		int value = 0;
+		for (int i = 0; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (c < '0' || c > '9') {
+				return -1;
+			}
+			value = value * 10 + (c - '0');
+		}
+		return value;
 	}
 }

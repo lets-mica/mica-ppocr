@@ -143,6 +143,35 @@ class ValidationsTest {
 		assertEquals(ValidationStatus.UNCHECKABLE, Validations.validateBankCard(null).status());
 	}
 
+	@Test
+	void luhn_allZeroPlaceholder_failsInsteadOfPassing() {
+		// 全零串的 Luhn 加权和恒为 0，0 % 10 == 0 会被误判为"通过"；
+		// 但真实卡号不可能所有位相同 —— 必须在 Luhn 之前用形态校验拦掉。
+		// 判 FAIL（而非 UNCHECKABLE）才能让 FieldConfidence 把置信度归零并置位人工复核。
+		ValidationResult r = Validations.validateBankCard("000000000000000000");
+		assertFalse(r.valid());
+		assertTrue(r.mismatched());
+		assertEquals(ValidationStatus.FAIL, r.status());
+		assertEquals(Validations.RULE_BANK_CARD, r.rule());
+	}
+
+	@Test
+	void luhn_allSameDigit_failsInsteadOfPassing() {
+		// 同理：全一同码、全二同码等占位形态一律判 FAIL
+		assertTrue(Validations.validateBankCard("1111111111111111").mismatched());
+		assertTrue(Validations.validateBankCard("0000000000000000").mismatched());
+		assertTrue(Validations.validateBankCard("0000000000000000000").mismatched());
+	}
+
+	@Test
+	void luhn_normalCardWithMixedDigits_stillPasses() {
+		// 形态校验不能误伤正常卡号：含不同数字且 Luhn 成立的卡号仍判 PASS
+		assertTrue(Validations.isValidBankCard("4111111111111111"));
+		assertTrue(Validations.isValidBankCard("4539578763621486"));
+		// 含不同数字但 Luhn 不成立的，仍按 Luhn 判 FAIL（形态校验不干预）
+		assertTrue(Validations.validateBankCard("6222021234567890123").mismatched());
+	}
+
 	// ==================================================================
 	// 证件号回填
 	// ==================================================================
@@ -173,5 +202,24 @@ class ValidationsTest {
 		// 15 位 YY 按 19YY 补全
 		assertEquals("1949-12-31", Validations.birthDateFromIdNumber("110105491231002"));
 		assertNull(Validations.birthDateFromIdNumber("123"));
+	}
+
+	@Test
+	void birthDateFromId_illegalDateInNumber_returnsNull() {
+		// OCR 把月份认成 13、日认成 32 —— 拼出来的是非法日期，不能当成真实出生日期输出
+		assertNull(Validations.birthDateFromIdNumber("11010519491331002X"));
+		assertNull(Validations.birthDateFromIdNumber("11010519491232002X"));
+		// 2 月 30 日不存在（非闰年）
+		assertNull(Validations.birthDateFromIdNumber("11010519490230002X"));
+		// 15 位同样受检
+		assertNull(Validations.birthDateFromIdNumber("110105491331002"));
+	}
+
+	@Test
+	void birthDateFromId_leapDay_accepted() {
+		// 2000-02-29 是闰日，应被接受（防止校验过严误伤）
+		assertEquals("2000-02-29", Validations.birthDateFromIdNumber("11010520000229002X"));
+		// 1900 年不是闰年（能被 100 整除但不能被 400 整除）
+		assertNull(Validations.birthDateFromIdNumber("11010519000229002X"));
 	}
 }

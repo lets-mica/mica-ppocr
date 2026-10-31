@@ -167,4 +167,19 @@ class BankCardParserTest extends ParserTestSupport {
 		assertTrue(fc.needsReview());
 		assertTrue(r.isNeedsReview());
 	}
+
+	@Test
+	void parse_cardNumberAllZeroPlaceholder_scoreZeroAndNeedsReview() {
+		// 全零占位符卡号：Luhn 加权和恒为 0，会被误判为"通过" ⇒ 置信度不归零、不标复核。
+		// 必须在 Luhn 之前用形态校验拦掉（判 FAIL），否则下游会把这串占位符当成有效卡号。
+		BankCardResult r = parse(new BankCardParser(null), buildCardOcr("0000 0000 0000 0000"));
+		// 值仍然保留（丢值会让下游比现在更糟）
+		assertEquals("0000000000000000", r.getCardNumber());
+		FieldConfidence fc = r.getFieldConfidences().get("cardNumber");
+		assertNotNull(fc);
+		assertEquals(0d, fc.score(), 1e-9, "全零占位符卡号置信度必须归零");
+		assertFalse(fc.violations().isEmpty());
+		assertTrue(fc.needsReview());
+		assertTrue(r.isNeedsReview());
+	}
 }
