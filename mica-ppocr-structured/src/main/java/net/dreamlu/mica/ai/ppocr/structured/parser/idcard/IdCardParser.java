@@ -27,6 +27,8 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.core.ParsedField;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.ValidationResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 
+import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -347,17 +349,64 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			return null;
 		}
 		if (idNumber.length() == 18) {
-			return idNumber.substring(6, 10) + "年"
-				+ idNumber.substring(10, 12) + "月"
-				+ idNumber.substring(12, 14) + "日";
+			return formatBirthDate(idNumber.substring(6, 10), idNumber.substring(10, 12),
+				idNumber.substring(12, 14));
 		}
 		if (idNumber.length() == 15) {
 			// 15 位 YY 默认按 19YY 补全（早期 15 位身份证号均为 19XX 年签发）
-			return "19" + idNumber.substring(6, 8) + "年"
-				+ idNumber.substring(8, 10) + "月"
-				+ idNumber.substring(10, 12) + "日";
+			return formatBirthDate("19" + idNumber.substring(6, 8), idNumber.substring(8, 10),
+				idNumber.substring(10, 12));
 		}
 		return null;
+	}
+
+	/**
+	 * 组装并校验身份证号推出的出生日期。
+	 *
+	 * <p>号码被 OCR 认错时，出生日期段可能拼出「13 月」「32 日」这类非法日期。
+	 * 此处用 {@link LocalDate#of(int, int, int)} 校验月份范围、当月天数与闰年规则，
+	 * 非法则返回 {@code null} —— <b>宁可不给日期，也不给一个假日期</b>。
+	 *
+	 * @param year  年（4 位字符串）
+	 * @param month 月（2 位字符串）
+	 * @param day   日（2 位字符串）
+	 * @return 合法则返回 {@code yyyy年MM月dd日}，否则返回 null
+	 */
+	private static String formatBirthDate(String year, String month, String day) {
+		int y = parseDigits(year);
+		int m = parseDigits(month);
+		int d = parseDigits(day);
+		if (y < 0 || m < 0 || d < 0) {
+			return null;
+		}
+		try {
+			// LocalDate.of 会校验月份范围、当月天数与闰年规则
+			LocalDate.of(y, m, d);
+		} catch (DateTimeException e) {
+			return null;
+		}
+		return year + "年" + month + "月" + day + "日";
+	}
+
+	/**
+	 * 解析数字字符串，非法返回 -1。
+	 *
+	 * @param s 数字字符串
+	 * @return 数值；含非数字字符或为空时返回 -1
+	 */
+	private static int parseDigits(String s) {
+		if (s == null || s.isEmpty() || s.length() > 4) {
+			return -1;
+		}
+		int value = 0;
+		for (int i = 0; i < s.length(); i++) {
+			char c = s.charAt(i);
+			if (c < '0' || c > '9') {
+				return -1;
+			}
+			value = value * 10 + (c - '0');
+		}
+		return value;
 	}
 
 	private static String parseAddress(List<PPOcrV6Result> results) {

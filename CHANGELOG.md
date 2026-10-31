@@ -13,6 +13,7 @@
 - fix(core): `PPOcrV6Engine.close()` 与在途推理的并发崩溃 —— ONNX Session 释放后底层 native 句柄被 free，与推理重叠会访问已释放内存，表现为 **SIGSEGV（JVM 级崩溃，不可捕获）**。现用公平模式 `ReentrantReadWriteLock` 保护会话生命周期：推理入口持读锁（可并发），`close()` 持写锁；`close()` 采用**有界等待 + 超时延迟释放**（默认等 1000ms，超时则引擎立即退役但不释放 native 会话，释放延后到在途推理结束），关停不会被长耗时推理拖住且绝不 use-after-free。⚠️ 行为变更：超时后在途推理可能被中断（抛 `IllegalStateException`）。回归测试见 `PPOcrV6EngineLifecycleTest`。
 - refactor(core): OpenCV 原生库加载收敛到 `PPOcrV6Engine` 构造期（`ensureOpenCvLoaded()`），Spring Starter / Solon Plugin 的 `OpenCVNativeLoader` 随之删除。openpnp 的 OpenCV 不会随 JVM 启动自动加载，原先靠各处各记得调一次 `loadLocally()`，漏掉则故障被推迟到**首个推理请求**才以 `UnsatisfiedLinkError` 暴露；现改为构造期 **fail fast**（抛 `IllegalStateException`），保证「构造成功 ⇒ 推理不会撞 native 缺失」。⚠️ 行为变更：`mica.ai.ppocr.enabled=false` 时引擎 bean 不存在 ⇒ **OpenCV 原生库不再加载**，业务方自行使用 `org.opencv.*` 需自己调 `loadLocally()`。
 - fix(structured): 银行卡号校验不再放过「各位数字全同」的占位串 —— Luhn 对全零串加权和恒为 0（`0 % 10 == 0`）会误判为通过，导致 `000000000000000000` 这类票据占位符拿到满分置信度且不触发人工复核。现于 Luhn 之前加形态前置校验，各位数字全同即判 `FAIL`，该字段置信度直接归零并置位复核（值仍保留）。含不同数字的正常卡号判定不受影响。
+- fix(structured): 证件号回填出生日期不再输出非法日期 —— 号码被 OCR 认错时出生日期段可能拼出「13 月」「32 日」，此前会原样输出并因是推算来源而不触发置信度归零。现统一用 `LocalDate.of` 校验月份范围、当月天数与闰年规则（与 `DateRepair` 同一口径），非法则该字段置空而非给出一个假日期。⚠️ 行为变更：身份证号推出出生日期的格式不变，仅非法日期改为返回空。
 
 ### v1.2.4 - 2026-10-25
 - feat(core): 接通 `PdfOcrConfig` —— `mica.ai.ppocr.pdf.*` 不再是死配置。`PPOcrV6Config` 新增 `pdfOcrConfig`，`PPOcrV6Engine` 的 PDF 入口改为消费它（原先硬编码 `PdfOcrConfig.defaults()`），影响**文本层可用性判定**与**渲染通道 DPI**；新增 `getPdfOcrConfig()` 便于观测生效值。

@@ -277,7 +277,7 @@ class IdCardParserTest extends ParserTestSupport {
 	}
 
 	@Test
-	void parse_idNumber_18PriorityOver15Substring() {
+	void parse_birthDateFromIdNumber_18PriorityOver15Substring() {
 		// 18 位号码的前 15 位也是连续数字（合法 15 位子串），需识别为完整 18 位而非前 15 位
 		List<PPOcrV6Result> results = CollUtil.listOf(
 			box("姓名", 60, 100, 140, 130),
@@ -289,6 +289,35 @@ class IdCardParserTest extends ParserTestSupport {
 		// 完整 18 位号码（不返回前 15 位 "000000198501010"）
 		assertEquals(18, r.getIdNumber().length());
 		assertEquals("000000198501010010", r.getIdNumber());
+	}
+
+	@Test
+	void parse_birthDateFromIdNumber_illegalDate_notDerived() {
+		// OCR 把出生日期的月份认成 13 —— 推算出的是非法日期，
+		// 必须返回 null（字段缺失），不能输出 "1990年13月15日" 这种假日期
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试辛", 160, 100, 220, 130),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000199013150009", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertEquals(IdCardSide.FRONT, r.getSide());
+		assertNull(r.getBirthDate());
+	}
+
+	@Test
+	void parse_birthDateFromIdNumber_feb30_notDerived() {
+		// 非闰年的 2 月 30 日不存在，同样不能输出
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试辛", 160, 100, 220, 130),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000199002300009", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertEquals(IdCardSide.FRONT, r.getSide());
+		assertNull(r.getBirthDate());
 	}
 
 	/**
