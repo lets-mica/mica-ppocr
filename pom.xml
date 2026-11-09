@@ -43,7 +43,7 @@
              Lombok 1.18.46 + JDK 17 + <release> 1.8 在编译器插件里会触发 "不支持发行版本 1.8"（实测）。
              CI 通过显式 -Dmaven.compiler.release=8 走命令行注入，可绕开该问题。
              这样既不破坏本地默认构建（source/target 1.8），又能在 CI 卡住 Java 9+ API 残留。 -->
-        <maven-flatten.version>1.8.0</maven-flatten.version>
+        <maven-flatten.version>1.9.0</maven-flatten.version>
         <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
         <maven-jar-plugin.version>3.5.1</maven-jar-plugin.version>
         <maven.javadoc.failOnError>false</maven.javadoc.failOnError>
