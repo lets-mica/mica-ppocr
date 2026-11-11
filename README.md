@@ -49,7 +49,7 @@
 
 **可选**：文档方向分类模型 `models/ppocr-v6/doc_ori/doc_ori.onnx`（`PP-LCNet_x1_0_doc_ori` 的 ONNX 导出，6.47 MB）。
 
-![模型评分](docs/images/v6acc_opt.png)
+![模型评分](docs/images/v6acc_opt.jpg)
 
 ## 4. Maven 依赖
 
