@@ -722,6 +722,40 @@ Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
 **但堆分配降 32%~40%、峰值存活堆降 26%~46%** —— 这项优化的价值主要在**内存与 GC 压力**，不在速度。
 并发场景下每个在途请求各省 75~120 MB 分配量。
 
+**String 实例方法每次调用都重新编译正则（structured 模块已全量预编译）**：
+
+`String#matches` / `String#replaceAll` / `String#split` 的入参是**正则字符串**，
+每次调用都会 `Pattern.compile` 一遍。解析层的「标签 × 候选框」扫描路径上逐框调用，
+一次解析要编译上百次同一份正则 ⇒ 全部提为 `static final Pattern`：
+
+| API | String 实例方法 | 预编译 Pattern | 结论 |
+| --- | --- | --- | --- |
+| `matches` | 119 ns | 22 ns | **改**，5.4× |
+| `replaceAll` | 184 ns | 86 ns | **改**，2.1× |
+| `split("-")` | 10 ns | 44 ns | **不改**，String 快 4.2× |
+| `split("\\.")` | 11 ns | 26 ns | **不改**，String 快 2.4× |
+
+⚠️ **`split` 有 JDK 快路径，不要改**：`String#split` 对「单字符非元字符」与
+「`\` + 非字母数字的两字符转义」走**免编译快路径**（用 `indexOf` 切），
+换成 `Pattern#split` 反而**慢 2~4 倍**。只有多字符元字符类（如 `split("[-/.年月日]")`）
+才真的编译正则，那种才值得改（实测 1.79×）。
+
+等价性依据：`String#matches(r)` ≡ `Pattern.compile(r).matcher(s).matches()`，
+`String#replaceAll(r, rep)` ≡ `Pattern.compile(r).matcher(s).replaceAll(rep)`，
+两者 flags 均为 0 ⇒ 预编译**逐位等价**。
+
+**实测收益**（tiny 档，解析层基准，中位数）：
+
+| 解析器 | 解析耗时 | 每次解析的堆分配 |
+| --- | --- | --- |
+| InvoiceParser | 0.311 → 0.239 ms（−23%） | 1,109,568 B → **444,376 B（−60%）** |
+| TaxiReceiptParser | 0.221 → 0.172 ms（−22%） | 500,920 B → **158,776 B（−68%）** |
+| VehicleLicenseParser | 0.195 → 0.151 ms（−23%） | 423,560 B → **158,872 B（−63%）** |
+| IdCardParser | 0.092 → 0.071 ms（−22%） | 205,720 B → **72,832 B（−65%）** |
+
+⇒ 解析耗时降 ~22%，**分配量降 60%~68%** —— 每次解析不再新建上百个临时正则对象。
+代价：52 个 `Pattern` 常量约 **40 KB** 静态堆 + 一次性编译 **~50~90 µs**（类加载时一次，可忽略）。
+
 **改预处理数值前必须知道的三件事**：
 
 1. **uint8 → CV_32F 与 uint8 → 提升为 float 逐位相同**（0~255 在 float32 精确可表示）。
