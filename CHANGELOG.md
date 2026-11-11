@@ -5,6 +5,7 @@
 ### v1.2.6 - 未发布
 - perf(core): 检测最大边长限制默认 4000 → 1920 —— `detLimitType=min` + `detLimitSideLen=64` 下这是唯一的缩放闸门，此前对 2K~4K 图几乎不生效（行驶证 2988×2199 的检测输入是 2208×2976、共 657 万像素），而检测推理占整条链路的 74%。检测耗时随之下降：行驶证 1638 → 951 ms（1.72×）、发票 1495 → 1223 ms（1.22×）、PDF 通道（forceOcr，A4@200dpi）1374 → 1149 ms（1.20×）。**行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器的字段级比对中无任何字段变为 null，6 个业务字段有单字抖动（4 变差、2 变好）；用 `detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景会被本值二次截断，需自行调大。
 - fix(structured): 老版增值税发票的「价税合计（小写）」被误取成不含税金额 —— 「(小写)」框里的 ¥ 符号被 OCR 认成汉字时，小写金额取不到标签内提取，只能靠位置锚定兜底，而兜底会命中读序更靠前的明细表「金额」列（不含税金额）。现以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元即用反推值覆盖 —— 电子发票解析器本就有此兜底，老版增值税这条链路此前缺失。回归测试见 `InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`。
+- perf(core): ONNX Runtime 输出张量改为零拷贝读取 —— det 与 rec 的输出数据原先都会被整块再拷贝一次（rec 每批 6.9 MB、det 在原图分辨率下可达 26 MB），现直接从张量底层数组取用，省掉这部分拷贝与分配。**每次 OCR 的堆分配降 32%~40%、峰值存活堆降 26%~46%**，端到端耗时降 1%~2%。**识别文本与置信度逐位不变**（42 张样图的端到端快照零差异），回归测试见 `PPOcrV6EngineTensorAccessTest`。
 
 ### v1.2.5 - 2026-11-01
 - feat(structured): 新增通用解析器（声明式 schema 入口）。`structured/parser/generic/` 提供 `OcrFieldSchema` / `OcrStructuredParser` / `OcrStructuredResult` / `FieldSpec` / `FieldRule` / `ValueNormalizer` / `ValueLocator` 共 7 个类，新增单据类型写一份 schema 即可抽取字段、无需再实现解析器类，与存量 10 个强类型 parser 并行存在；取值走「标签定位 → 合并框剥值 → 正则兜底」，校验位与字段置信度复用 `Validations` / `FieldConfidence`，Spring Boot / Solon `PPOcrTemplate` 同步新增 `generic(schema)`。

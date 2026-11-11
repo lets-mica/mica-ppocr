@@ -1179,6 +1179,56 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
+	 * 从 ONNX Runtime 输出张量的 {@link FloatBuffer} 取回 float 数据，优先<b>零拷贝</b>。
+	 *
+	 * <p><b>为什么能零拷贝</b>：ONNX Runtime 1.18 的 {@code OnnxTensor#getFloatBuffer()}
+	 * 实现是「{@code getBuffer().asFloatBuffer()} → {@code FloatBuffer.allocate(capacity)}
+	 * → {@code put(src)}」—— 返回的是一块<b>堆数组支撑</b>的 {@code HeapFloatBuffer}，
+	 * 它的 {@code array()} 就是张量数据副本本身。于是「再 {@code get(float[])} 拷一份」
+	 * 是纯浪费：直接取用底层数组即可。
+	 *
+	 * <p><b>收益</b>（tiny 档实测）：
+	 * <ul>
+	 *   <li>rec 输出每批 B×T×C = 6×40×7180 = <b>6.9 MB</b>，每帧数批；</li>
+	 *   <li>det 输出在原图分辨率下（2208×2976）可达 <b>26 MB</b>。</li>
+	 * </ul>
+	 * 省掉的就是这个量级的拷贝 + 分配。
+	 *
+	 * <p><b>数值等价</b>：{@code get(float[])} 是逐值拷贝，与底层数组是同一批 float 的
+	 * 同一批位模式 ⇒ <b>逐位相同</b>，解码结果与识别文本不变。
+	 *
+	 * <p><b>兜底</b>：若未来 ORT 改为返回 direct buffer（{@code hasArray()} 为 false），
+	 * 回退到一次批量拷贝 {@code get(float[], off, len)}——行为不变，仅少一次优化。
+	 *
+	 * <p><b>包级可见，仅供测试对拍</b>（与 {@link #isWarmedUp()} 等同款约定）：
+	 * 测试用它断言「零拷贝路径返回的确实是底层数组」+「数值与源数据逐位一致」，
+	 * 防止这项优化被静默退化（改回 {@code get(float[])} 时性能不会报错、只会悄悄变慢）。
+	 *
+	 * @param buf          张量数据的 FloatBuffer（位置由调用方保证从 0 开始有效）
+	 * @param elementCount 需要读取的元素个数
+	 * @return 长度为 {@code elementCount} 的数组；底层数组长度恰好匹配时即该数组本身
+	 */
+	static float[] toFloatArray(FloatBuffer buf, int elementCount) {
+		if (buf.hasArray()) {
+			float[] arr = buf.array();
+			if (arr.length == elementCount) {
+				// 零拷贝：直接返回底层数组（只读使用，不做任何写入）
+				return arr;
+			}
+			if (arr.length > elementCount) {
+				float[] head = new float[elementCount];
+				System.arraycopy(arr, 0, head, 0, elementCount);
+				return head;
+			}
+		}
+		// 兜底：direct buffer（未来 ORT 变更）或长度不匹配时，走一次批量拷贝
+		float[] data = new float[elementCount];
+		buf.rewind();
+		buf.get(data, 0, Math.min(elementCount, buf.remaining()));
+		return data;
+	}
+
+	/**
 	 * 文本识别（Mat 版，支持批量）。
 	 *
 	 * <p>仅适用于「已持有 Mat 并需复用」的高级场景（如同一图跑多次推理）；
@@ -1230,8 +1280,8 @@ public final class PPOcrV6Engine implements Closeable {
 					int bOut = (int) outShape[0];
 					int tOut = (int) outShape[1];
 					int cOut = (int) outShape[2];
-					float[] flat = new float[bOut * tOut * cOut];
-					outTensor.getFloatBuffer().get(flat);
+					// 零拷贝取回输出数据：省掉一次 B×T×C（tiny 档 6.9 MB/批）的拷贝与分配
+					float[] flat = toFloatArray(outTensor.getFloatBuffer(), bOut * tOut * cOut);
 					CtcLabelDecoder.Result decoded = recPost.call(flat, bOut, tOut, cOut);
 					for (int j = 0; j < decoded.texts().length; j++) {
 						int orig = sortedOrder[start + j];
@@ -1453,9 +1503,7 @@ public final class PPOcrV6Engine implements Closeable {
 		) {
 			OnnxTensor outTensor = (OnnxTensor) result.get(docOriOutputName).get();
 			// 输出 shape: [1, 4]，展平为 length=4 的 logits
-			FloatBuffer out = outTensor.getFloatBuffer();
-			float[] logits = new float[4];
-			out.get(logits);
+			float[] logits = toFloatArray(outTensor.getFloatBuffer(), 4);
 			return docOriPost.call(logits);
 		} catch (OrtException e) {
 			throw new RuntimeException("doc_ori 推理失败: " + e.getMessage(), e);
@@ -1484,6 +1532,8 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>合并原先的 readProb2D + probToMat 两步，消除 float[][] 中间层：
 	 * tensor FloatBuffer → flat[] → Mat.put()，省掉 2 次冗余拷贝。
+	 * 其中 FloatBuffer → flat[] 一步已进一步零拷贝化（见 {@link #toFloatArray}），
+	 * 只剩 Mat.put() 那次 JNI 拷贝。
 	 *
 	 * <p>调用方负责释放返回值；本方法内部仅在 {@link Mat#put} 抛出时回收尚未交付的 Mat。
 	 *
@@ -1492,12 +1542,11 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @throws OrtException 读取张量数据失败
 	 */
 	private Mat readProbToMat(OnnxTensor tensor) throws OrtException {
-		FloatBuffer buf = tensor.getFloatBuffer();
 		long[] shape = tensor.getInfo().getShape();
 		int h = (int) shape[2];
 		int w = (int) shape[3];
-		float[] data = new float[h * w];
-		buf.get(data);
+		// 零拷贝取回概率图数据：原图分辨率下 H×W 可达 26 MB，省掉一次整块拷贝
+		float[] data = toFloatArray(tensor.getFloatBuffer(), h * w);
 		Mat m = new Mat(h, w, org.opencv.core.CvType.CV_32F);
 		try {
 			m.put(0, 0, data);

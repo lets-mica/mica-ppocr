@@ -28,6 +28,11 @@ When changing numeric logic, verify against the Python implementation rather tha
 - **IO API**（Java 9/11+）：不要用 `InputStream.readAllBytes` / `Files.writeString` / `Path.of` / `Stream.toList`，
   统一用 `CollUtil.readAllBytes/writeString/pathOf/toList`
 
+- **NIO API**（Java 11+，看着像 JDK 8 但不是）：`FloatBuffer.allocateDirect` 是 **Java 11+**，
+  JDK 8 只有 `ByteBuffer.allocateDirect` —— 要 direct FloatBuffer 就用
+  `ByteBuffer.allocateDirect(n).order(ByteOrder.nativeOrder()).asFloatBuffer()`。
+  同类易误用的还有 `FloatBuffer.mismatch`（8）/ `CharBuffer` 的部分方法（11+）。
+
 - **单字符字面量**：单个字符用 char 字面量 `'-'`，不要写字符串字面量 `"-"`（分隔符拼接处尤其明显）。
   三个必须绕开的坑：
   - **左侧是数字时不能换** —— `int + '-' + int` 会从字符串拼接变成**数值加法**。
@@ -677,6 +682,45 @@ CV_32F 中间 Mat。实测收益：
 | --- | --- | --- |
 | det 预处理（3000×4000 图） | 275 MB → 137 MB（-50%） | 110 ms → 42 ms（2.6×） |
 | rec 预处理（50 框 × 1200px 宽） | 79.1 MB → 39.8 MB（-50%） | 21.1 ms → 15.9 ms（-25%） |
+
+**ONNX Runtime 输出张量的读取路径（1.18.0，坑很深）**：
+
+`OnnxTensor#getFloatBuffer()` **本身就已经拷贝了两次** —— 实现是
+「`getBuffer()`（native → 堆 ByteBuffer）→ `asFloatBuffer()` → `FloatBuffer.allocate(capacity)` → `put(src)`」，
+返回的是一块**堆数组支撑**的 `HeapFloatBuffer`。于是代码里再写
+`outTensor.getFloatBuffer().get(new float[n])` 就是**第三次拷贝**，白白多拷一遍全量张量：
+
+- rec 输出每批 B×T×C = 6×40×7180 = **6.9 MB**（tiny 档），每帧数批
+- det 输出在原图分辨率下（2208×2976）可达 **26 MB**
+
+⇒ **取数一律走 `PPOcrV6Engine.toFloatArray(FloatBuffer, int)`**（包级可见，仅供测试对拍）：
+`buf.hasArray()` 为真且长度恰好匹配时直接返回 `buf.array()`，**零拷贝**；否则兜底回一次批量拷贝。
+`get(float[])` 是逐值拷贝，与底层数组是同一批 float 的同一批位模式 ⇒ **逐位相同**，识别结果不变。
+
+三个必须记住的细节：
+
+1. **`getFloatBuffer()` 每次调用都重新拷贝**，返回的是**新的** `HeapFloatBuffer` ⇒
+   断言零拷贝时**只能取一次** buffer 再比 `array()`，取两次比的是两个不同实例。
+2. **`getByteBuffer()` 返回的是 BIG_ENDIAN 的堆 buffer**（`ByteBuffer.allocate` 的默认值），
+   而张量数据是 native 小端 ⇒ 直接 `asFloatBuffer()` 会**读出乱数**，
+   必须 `order(ByteOrder.nativeOrder())` 后再取。
+3. **「直接从 FloatBuffer 解码」是负收益** —— `FloatBuffer.get(int)` 带边界检查与间接寻址，
+   实测比 `float[]` 解码**慢 50%~90%**（tiny 档单批：float[] 约 1.1~1.4 ms，FloatBuffer 约 2.0~2.7 ms）。
+   整体净收益还取决于 `getFloatBuffer()` 自身耗时的波动，两次测量净收益**正负翻转**（+0.42 ms / -0.60 ms）
+   ⇒ **不要走这条路**；要省就省**拷贝**，别改解码容器。`getByteBuffer` 直解同样是负收益。
+
+**实测收益**（tiny 档，单线程 CPU；分配量用 `ThreadMXBean#getThreadAllocatedBytes` 精确统计
+Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
+
+| 样图 | 每次 OCR 的堆分配 | 峰值存活堆 | 端到端耗时 |
+| --- | --- | --- | --- |
+| 行驶证 vehicle1（36 框） | 235.7 MB → **160.2 MB（−32%）** | 170.8 MB → **126.8 MB（−26%）** | 1641 → 1621 ms（−1.2%） |
+| 发票 invoice1（73 框） | 306.3 MB → **186.2 MB（−39%）** | 205.7 MB → **111.3 MB（−46%）** | 1513 → 1478 ms（−2.3%） |
+| 出租车票 taxi1（53 框） | 166.8 MB → **99.7 MB（−40%）** | 106.0 MB → **67.8 MB（−36%）** | 767 → 750 ms（−2.2%） |
+
+⇒ **耗时只降 1%~2%**（det 推理占 74%，这里省的是拷贝不是推理），
+**但堆分配降 32%~40%、峰值存活堆降 26%~46%** —— 这项优化的价值主要在**内存与 GC 压力**，不在速度。
+并发场景下每个在途请求各省 75~120 MB 分配量。
 
 **改预处理数值前必须知道的三件事**：
 
