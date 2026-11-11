@@ -47,7 +47,7 @@ mica:
       # ===== 检测（DB 后处理）参数 =====
       # det-limit-side-len: 64                                # 检测限制边长（默认 64，证件类场景推荐）
       # det-limit-type: min                                   # 限制类型：min / max（默认 min，限短边）
-      # det-max-side-limit: 4000                              # 检测最大边长限制
+      # det-max-side-limit: 1920                              # 检测最大边长限制（默认 1920，唯一缩放闸门）
       # det-thresh: 0.3                                       # 检测像素阈值
       # det-box-thresh: 0.6                                   # 检测框阈值
       # det-unclip-ratio: 1.5                                 # 多边形 unclip 比例

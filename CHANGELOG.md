@@ -2,6 +2,10 @@
 
 ## 发行版本
 
+### v1.2.6 - 未发布
+- perf(core): 检测最大边长限制默认 4000 → 1920 —— `detLimitType=min` + `detLimitSideLen=64` 下这是唯一的缩放闸门，此前对 2K~4K 图几乎不生效（行驶证 2988×2199 的检测输入是 2208×2976、共 657 万像素），而检测推理占整条链路的 74%。检测耗时随之下降：行驶证 1638 → 951 ms（1.72×）、发票 1495 → 1223 ms（1.22×）、PDF 通道（forceOcr，A4@200dpi）1374 → 1149 ms（1.20×）。**行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器的字段级比对中无任何字段变为 null，6 个业务字段有单字抖动（4 变差、2 变好）；用 `detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景会被本值二次截断，需自行调大。
+- fix(structured): 老版增值税发票的「价税合计（小写）」被误取成不含税金额 —— 「(小写)」框里的 ¥ 符号被 OCR 认成汉字时，小写金额取不到标签内提取，只能靠位置锚定兜底，而兜底会命中读序更靠前的明细表「金额」列（不含税金额）。现以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元即用反推值覆盖 —— 电子发票解析器本就有此兜底，老版增值税这条链路此前缺失。回归测试见 `InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`。
+
 ### v1.2.5 - 2026-11-01
 - feat(structured): 新增通用解析器（声明式 schema 入口）。`structured/parser/generic/` 提供 `OcrFieldSchema` / `OcrStructuredParser` / `OcrStructuredResult` / `FieldSpec` / `FieldRule` / `ValueNormalizer` / `ValueLocator` 共 7 个类，新增单据类型写一份 schema 即可抽取字段、无需再实现解析器类，与存量 10 个强类型 parser 并行存在；取值走「标签定位 → 合并框剥值 → 正则兜底」，校验位与字段置信度复用 `Validations` / `FieldConfidence`，Spring Boot / Solon `PPOcrTemplate` 同步新增 `generic(schema)`。
 - feat(structured): 补齐「正确性」层 —— 结构化结果新增字段级置信度与人工复核出口：`BaseStructuredResult` 新增 `fieldConfidences` / `needsReview` / `reviewReasons`；新增 `core/Validations.java` 提供 GB 11643 / Luhn / GB 32100 三套校验位（`PASS` / `FAIL` / `UNCHECKABLE` 三态），已接入身份证、银行卡、营业执照、驾驶证四个解析器。**校验不通过时置信度直接归零（不是打折）**，但**字段值仍然保留** —— 丢值会让下游比现在更糟；「字段缺失」也不等于「值不可信」，是否复核由解析器按版面预期显式标记。

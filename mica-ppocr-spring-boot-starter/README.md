@@ -45,7 +45,7 @@ mica:
       # ===== 检测（DB 后处理）参数 =====
       # det-limit-side-len: 64                                # 检测限制边长（默认 64，证件类场景推荐）
       # det-limit-type: min                                   # 限制类型：min / max（默认 min，限短边）
-      # det-max-side-limit: 4000                              # 检测最大边长限制
+      # det-max-side-limit: 1920                              # 检测最大边长限制（默认 1920，唯一缩放闸门）
       # det-thresh: 0.3                                       # 检测像素阈值
       # det-box-thresh: 0.6                                   # 检测框阈值
       # det-unclip-ratio: 1.5                                 # 多边形 unclip 比例
@@ -84,7 +84,7 @@ mica:
 | `mica.ai.ppocr.rec-char-dict-path` | String | — | **必填**，识别字符字典路径 |
 | `mica.ai.ppocr.det-limit-side-len` | int | `64` | 检测限制边长。与 `det-limit-type` 配合：长/短边超过此值时按比例缩放。默认组合 `64 + min` 面向证件/卡证类小图，保证短边至少 64 像素；通用文档/自然场景可改较大值 + `max` |
 | `mica.ai.ppocr.det-limit-type` | String | `min` | 限制类型：`min`（短边限制）/ `max`（长边限制） |
-| `mica.ai.ppocr.det-max-side-limit` | int | `4000` | 检测最大边长限制 |
+| `mica.ai.ppocr.det-max-side-limit` | int | `1920` | 检测最大边长限制。默认 `det-limit-type=min` 下这是唯一的缩放闸门：短边 ≥ 64 的图按原分辨率检测，最长边超过此值才整体缩放。调大会更准但更慢（检测耗时随像素数增长），调小更快但小字可能漏检 |
 | `mica.ai.ppocr.det-thresh` | float | `0.3` | 检测像素阈值 |
 | `mica.ai.ppocr.det-box-thresh` | float | `0.6` | 检测框阈值 |
 | `mica.ai.ppocr.det-unclip-ratio` | float | `1.5` | 多边形 unclip 比例 |

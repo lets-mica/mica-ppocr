@@ -30,7 +30,7 @@ class PPOcrV6ConfigTest {
 		PPOcrV6Config config = PPOcrV6Config.defaults();
 		assertEquals(64, config.getDetLimitSideLen());
 		assertEquals("min", config.getDetLimitType());
-		assertEquals(4000, config.getDetMaxSideLimit());
+		assertEquals(1920, config.getDetMaxSideLimit());
 		assertEquals(0.3f, config.getDetThresh());
 		assertEquals(0.6f, config.getDetBoxThresh());
 		assertEquals(1.5f, config.getDetUnclipRatio());

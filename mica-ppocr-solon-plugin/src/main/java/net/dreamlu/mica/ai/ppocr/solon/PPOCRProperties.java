@@ -77,9 +77,9 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	private String detLimitType = "min";
 
 	/**
-	 * 检测最大边长限制
+	 * 检测最大边长限制（默认 1920）
 	 */
-	private int detMaxSideLimit = 4000;
+	private int detMaxSideLimit = 1920;
 
 	/**
 	 * 检测阈值

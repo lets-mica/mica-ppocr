@@ -67,10 +67,25 @@ public final class PPOcrV6Config {
 	private String detLimitType = "min";
 
 	/**
-	 * 检测：最大边长限制
+	 * 检测：最大边长限制（默认 1920）。
+	 *
+	 * <p>在 {@code detLimitType="min"} + {@code detLimitSideLen=64} 的默认组合下，
+	 * 这是<b>唯一的缩放闸门</b> —— 短边 ≥ 64 的图会按原分辨率送进检测模型，
+	 * 只有最长边超过本值才会被整体缩放。
+	 *
+	 * <p>1920 是实测安全线（tiny 档，44 张样图 × 10 个解析器逐字段比对）：
+	 * <ul>
+	 *   <li><b>无任何字段变为 null</b>；6 个业务字段有单字抖动（4 变差、2 变好），
+	 *       其余全部一致；</li>
+	 *   <li>1536 起出现静默串值（发票号码被错配到别的框），1280 出现车牌丢字
+	 *       （"NBU1346" → "BU1346"）。</li>
+	 * </ul>
+	 *
+	 * <p>⚠️ 用 {@code detLimitType="max"} 且 {@code detLimitSideLen} &gt; 1920 的场景
+	 * 行为会变（原本按长边缩放，现在会被本值二次截断），这类用户需自行调大。
 	 */
 	@Builder.Default
-	private int detMaxSideLimit = 4000;
+	private int detMaxSideLimit = 1920;
 
 	/**
 	 * 检测：DB 后处理二值化阈值

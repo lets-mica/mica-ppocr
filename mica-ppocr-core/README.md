@@ -143,7 +143,7 @@ Spring Boot / Solon 两端的 yml 配置项与之逐项对应（kebab-case ↔ c
 |------|------|--------|------|
 | `detLimitSideLen` | `int` | `64` | 检测限制边长。与 `detLimitType` 配合：长/短边超过此值时按比例缩放。默认组合 `64 + min` 面向证件/卡证类小图，保证短边至少 64 像素；通用文档/自然场景可改较大值 + `max` |
 | `detLimitType` | `String` | `"min"` | 限制类型：`min`（短边限制）/ `max`（长边限制） |
-| `detMaxSideLimit` | `int` | `4000` | 检测最大边长限制 |
+| `detMaxSideLimit` | `int` | `1920` | 检测最大边长限制。默认 `detLimitType=min` 下这是唯一的缩放闸门：短边 ≥ 64 的图按原分辨率检测，最长边超过此值才整体缩放。调大会更准但更慢（检测耗时随像素数增长），调小更快但小字可能漏检 |
 | `detThresh` | `float` | `0.3f` | 检测像素阈值 |
 | `detBoxThresh` | `float` | `0.6f` | 检测框阈值 |
 | `detUnclipRatio` | `float` | `1.5f` | 多边形 unclip 比例 |

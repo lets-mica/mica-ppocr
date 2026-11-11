@@ -378,6 +378,47 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("秦丽萍", r.getIssuer());
 	}
 
+	/**
+	 * 老版增值税发票「价税合计（小写）」的 ¥ 符号被 OCR 认成汉字「洋」时，
+	 * 小写金额走不到「(小写) 标签内提取」，只能靠位置锚定兜底 ——
+	 * 而兜底会命中读序更靠前的明细表「金额」列（不含税金额），把价税合计取错。
+	 *
+	 * <p>修法：以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元
+	 * 即判定 OCR 误识，用反推值覆盖（与电子发票解析器同款兜底）。
+	 *
+	 * <p>本例：价税合计应为 ￥400.00（不含税金额 ￥377.36 + 税额 ￥22.64），
+	 * 不能被兜底取成不含税金额 ￥377.36。
+	 */
+	@Test
+	void parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			// 明细表「金额」列（读序在前，不含税金额）—— 兜底锚定会误命中它
+			box("￥377.36", 700, 400, 780, 425),
+			// 价税合计行：大写 + 小写（¥ 被认成「洋」）
+			box("价税合计（大写）", 100, 800, 220, 825),
+			box("肆佰圆整", 240, 800, 330, 825),
+			box("（小写）洋400.00", 360, 800, 480, 825)
+		);
+		InvoiceResult r = parse(PARSER, results);
+		assertEquals("肆佰圆整", r.getTotalAmountUpper());
+		assertEquals("￥400.00", r.getTotalAmountLower());
+	}
+
+	/**
+	 * 大写与小写一致时不得被大写反推逻辑改动（防止过度纠正）。
+	 */
+	@Test
+	void parse_vat_totalLower_keepsOcrValueWhenConsistentWithUpperCase() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("价税合计（大写）", 100, 800, 220, 825),
+			box("肆佰圆整", 240, 800, 330, 825),
+			box("（小写）￥400.00", 360, 800, 480, 825)
+		);
+		InvoiceResult r = parse(PARSER, results);
+		assertEquals("肆佰圆整", r.getTotalAmountUpper());
+		assertEquals("￥400.00", r.getTotalAmountLower());
+	}
+
 	// ========================================================================
 	// 新版电子发票（数电票）用例
 	// ========================================================================
