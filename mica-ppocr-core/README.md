@@ -203,6 +203,11 @@ Spring Boot / Solon 两端的 yml 配置项与之逐项对应（kebab-case ↔ c
 
 ## 8. PDF 双通道
 
+> **PDFBox 是可选依赖**：只做图片 OCR 的项目不需要引入它（core 不再向下游传递 pdfbox）。
+> 需要处理 PDF 输入时，额外引入 `org.apache.pdfbox:pdfbox:3.0.8`；
+> 未引入时 `run(byte[])` 收到 PDF 输入会抛 `IllegalStateException` 并提示补依赖，
+> 图片输入不受任何影响。
+
 `run(byte[])` / `run(Path)` 嗅探到 `%PDF-` 魔数时自动走 PDF 双通道，**调用方无需区分**：
 
 - **文本层通道**：文字型 PDF 直接抽取文本层坐标（行聚类 + 大间距拆分），不跑 OCR。

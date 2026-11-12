@@ -24,10 +24,11 @@ import lombok.ToString;
 import lombok.experimental.Accessors;
 import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfDependency;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrBridge;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfOcrConfig;
 import net.dreamlu.mica.ai.ppocr.pdf.PdfPageResult;
-import net.dreamlu.mica.ai.ppocr.pdf.PdfTextExtractor;
-import net.dreamlu.mica.ai.ppocr.pdf.PdfTextQuality;
+import net.dreamlu.mica.ai.ppocr.pdf.PdfRuntime;
 import net.dreamlu.mica.ai.ppocr.postprocessor.CtcLabelDecoder;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.postprocessor.DbPostProcessor;
@@ -37,10 +38,6 @@ import net.dreamlu.mica.ai.ppocr.preprocessor.DocOrientationPreprocessor;
 import net.dreamlu.mica.ai.ppocr.preprocessor.RecognitionPreprocessor;
 import net.dreamlu.mica.ai.ppocr.utils.*;
 import nu.pattern.OpenCV;
-import org.apache.pdfbox.Loader;
-import org.apache.pdfbox.pdmodel.PDDocument;
-import org.apache.pdfbox.rendering.ImageType;
-import org.apache.pdfbox.rendering.PDFRenderer;
 import org.opencv.core.Core;
 import org.opencv.core.CvType;
 import org.opencv.core.Mat;
@@ -86,6 +83,11 @@ import java.util.stream.Collectors;
  * <p>公开 API 只暴露 {@code byte[]} / {@link File} / {@link String} 三种入参，
  * 内部自动解码为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
  * 如确需复用已加载的 Mat，可使用 {@link #runMat(Mat)} 等方法。
+ *
+ * <p><b>PDF 输入需要额外依赖</b>：{@code run(...)} 嗅探到 {@code %PDF-} 魔数时会走 PDF 双通道，
+ * 该能力依赖 PDFBox（{@code org.apache.pdfbox:pdfbox:3.0.8}）—— 它是<b>可选依赖</b>，
+ * 不随 core 传递。未引入时收到 PDF 输入会抛 {@link IllegalStateException}
+ * 并指明要补的依赖；图片输入完全不受影响。
  */
 @Slf4j
 public final class PPOcrV6Engine implements Closeable {
@@ -170,10 +172,6 @@ public final class PPOcrV6Engine implements Closeable {
 	 * 是否启用文档方向分类（由 {@link PPOcrV6Config#isUseDocOrientationClassify()} 决定）。
 	 */
 	private final boolean docOriEnabled;
-	/**
-	 * PDF 文本层抽取器（线程安全，复用）。
-	 */
-	private final PdfTextExtractor pdfExtractor = new PdfTextExtractor();
 	/**
 	 * PDF 双通道配置（构造期从 {@link PPOcrV6Config#getPdfOcrConfig()} 取，
 	 * 为 null 时回落 {@link PdfOcrConfig#defaults()}）。
@@ -890,11 +888,13 @@ public final class PPOcrV6Engine implements Closeable {
 					head = null;
 				}
 				if (PdfMagicDetector.isPdf(head)) {
+					byte[] pdfBytes;
 					try {
-						return flattenPdfPages(runPdfBytes(Files.readAllBytes(imagePath), pdfOcrConfig, detParams));
+						pdfBytes = Files.readAllBytes(imagePath);
 					} catch (IOException e) {
 						throw new UncheckedIOException(e);
 					}
+					return runPdfBytes(pdfBytes, detParams);
 				}
 			}
 			Mat mat = loadMat(imagePath);
@@ -950,11 +950,7 @@ public final class PPOcrV6Engine implements Closeable {
 		try {
 			requireOpen();
 			if (PdfMagicDetector.isPdf(imgBytes)) {
-				try {
-					return flattenPdfPages(runPdfBytes(imgBytes, pdfOcrConfig, detParams));
-				} catch (IOException e) {
-					throw new UncheckedIOException(e);
-				}
+				return runPdfBytes(imgBytes, detParams);
 			}
 			Mat mat = decodeMat(imgBytes);
 			try {
@@ -1620,6 +1616,10 @@ public final class PPOcrV6Engine implements Closeable {
 	// ==================================================================
 	// PDF 双通道入口：每页文本层命中走坐标抽取；否则降级渲染 + OCR
 	// 全部为 private —— 公开 API 只走 run(...) 系列，PDF 自动嗅探转发到此处
+	//
+	// ⚠️ 本段刻意不出现任何 PDFBox 类型：PDFBox 是可选依赖，
+	//    引擎字节码里引用它会让「缺 PDFBox 时连图片 OCR 都跑不起来」。
+	//    所有 PDFBox 调用都在 PdfRuntime 里，由 PdfRuntimeHolder 延迟链接。
 	// ==================================================================
 
 	/**
@@ -1628,16 +1628,15 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>按 {@link PdfOcrConfig} 配置：每页先尝试文本层坐标抽取，
 	 * 文本质量不达标时降级到渲染 + OCR。
 	 *
+	 * <p><b>PDFBox 是可选依赖</b>：未引入时抛 {@link IllegalStateException}
+	 * 并在消息中指明要补的依赖，而不是让调用方看到 {@code NoClassDefFoundError}。
+	 *
 	 * @param pdfBytes PDF 字节
-	 * @param config   PDF 配置（不可为 null）
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
-	 * @return per-page 结果列表
-	 * @throws IOException PDF 解析失败
+	 * @return 平铺后的多页结果
+	 * @throws IllegalStateException PDFBox 依赖缺失
 	 */
-	private List<PdfPageResult> runPdfBytes(byte[] pdfBytes, PdfOcrConfig config, DbDetParams detParams) throws IOException {
-		if (config == null) {
-			throw new IllegalArgumentException("config must not be null");
-		}
+	private List<PPOcrV6Result> runPdfBytes(byte[] pdfBytes, DbDetParams detParams) {
 		if (pdfBytes == null || pdfBytes.length == 0) {
 			throw new IllegalArgumentException("pdfBytes must not be empty");
 		}
@@ -1645,8 +1644,14 @@ public final class PPOcrV6Engine implements Closeable {
 			throw new IllegalArgumentException(
 				"input bytes are not a PDF (missing %PDF- magic); use run(byte[]) for images");
 		}
-		try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
-			return runPdfPages(doc, config, detParams);
+		if (!PdfDependency.isAvailable()) {
+			throw new IllegalStateException(PdfDependency.MISSING_MESSAGE);
+		}
+		try {
+			List<PdfPageResult> pages = PdfRuntimeHolder.run(pdfBytes, pdfOcrConfig, detParams, this::runMat);
+			return flattenPdfPages(pages);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
 		}
 	}
 
@@ -1663,69 +1668,37 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
-	 * 按 {@code config} 遍历所有页：文本层质量达标时直接走 {@link PdfTextExtractor}，
-	 * 否则降级到渲染 + OCR。{@code forceOcr=true} 时跳过文本层抽取，全走 OCR。
+	 * PDF 运行时持有者：<b>延迟链接</b> {@link PdfRuntime}。
 	 *
-	 * @param doc       已加载的 PDF 文档（不可为 null）
-	 * @param config    PDF 配置（不可为 null）
-	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
-	 * @return per-page 结果列表
-	 * @throws IOException 渲染失败
+	 * <p>为什么要有这一层：{@link PdfRuntime} 里出现 PDFBox 类型，
+	 * 它的类链接（字节码校验）会连带触发 PDFBox 类的加载。
+	 * 若引擎直接引用 {@code PdfRuntime}，缺 PDFBox 时引擎自身的链接就可能失败 ——
+	 * 「只跑图片」的项目也会起不来。
+	 *
+	 * <p>放在独立嵌套类里后，{@code PPOcrV6Engine} 的常量池不出现任何 PDFBox 相关类型，
+	 * 只有真正要处理 PDF 输入、且 {@link PdfDependency#isAvailable()} 为真时，
+	 * 才会链接到 {@link PdfRuntime}。
 	 */
-	private List<PdfPageResult> runPdfPages(PDDocument doc, PdfOcrConfig config, DbDetParams detParams) throws IOException {
-		requireOpen();
-		int pageCount = doc.getNumberOfPages();
-		List<PdfPageResult> pages = new ArrayList<>(pageCount);
-		PDFRenderer renderer = null;
-		for (int i = 0; i < pageCount; i++) {
-			if (config.isForceOcr()) {
-				renderer = ensureRenderer(doc, renderer);
-				pages.add(ocrPdfPage(i, renderer, config, detParams));
-				continue;
-			}
-			List<PPOcrV6Result> textResults = pdfExtractor.extract(doc, i);
-			PdfTextQuality quality = pdfExtractor.quality(textResults);
-			if (quality.usable(config.getMinTextChars(), config.getMinReadableRatio())) {
-				pages.add(new PdfPageResult(i, false, textResults));
-			} else {
-				renderer = ensureRenderer(doc, renderer);
-				pages.add(ocrPdfPage(i, renderer, config, detParams));
-			}
-		}
-		return pages;
-	}
+	private static final class PdfRuntimeHolder {
 
-	/**
-	 * 惰性构造 {@link PDFRenderer}：同一文档只需创建一个 renderer 即可复用，避免重复绑定底层资源。
-	 *
-	 * @param doc      PDF 文档
-	 * @param renderer 已有 renderer（可为空）
-	 * @return 已存在或新创建的 renderer
-	 */
-	private static PDFRenderer ensureRenderer(PDDocument doc, PDFRenderer renderer) {
-		return renderer != null ? renderer : new PDFRenderer(doc);
-	}
+		/**
+		 * PDF 运行时单例（内部 {@code PdfTextExtractor} 无状态，可安全复用）。
+		 */
+		private static final PdfRuntime INSTANCE = new PdfRuntime();
 
-	/**
-	 * 渲染通道：按配置 DPI 渲染页面为 BGR Mat，走完整 OCR 链路。
-	 *
-	 * @param pageIndex 0-based 页索引
-	 * @param renderer  PDF 渲染器（不可为 null）
-	 * @param config    PDF 配置（不可为 null）
-	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
-	 * @return 该页 OCR 结果，{@code viaOcr=true}
-	 * @throws IOException 渲染失败
-	 */
-	private PdfPageResult ocrPdfPage(int pageIndex, PDFRenderer renderer, PdfOcrConfig config, DbDetParams detParams) throws IOException {
-		// OpenCV 原生库已在构造期由 ensureOpenCvLoaded() 加载（幂等），此处无需再加载
-		BufferedImage image = renderer.renderImageWithDPI(pageIndex, config.getRenderDpi(), ImageType.RGB);
-		Mat mat = BufferedImageUtils.toBgrMat(image);
-		List<PPOcrV6Result> results;
-		try {
-			results = runMat(mat, detParams);
-		} finally {
-			mat.release();
+		/**
+		 * 执行 PDF 双通道解析。
+		 *
+		 * @param pdfBytes PDF 字节
+		 * @param config   PDF 配置
+		 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+		 * @param bridge   渲染通道的 OCR 回调
+		 * @return per-page 结果列表
+		 * @throws IOException PDF 解析或渲染失败
+		 */
+		static List<PdfPageResult> run(byte[] pdfBytes, PdfOcrConfig config, DbDetParams detParams,
+									   PdfOcrBridge bridge) throws IOException {
+			return INSTANCE.run(pdfBytes, config, detParams, bridge);
 		}
-		return new PdfPageResult(pageIndex, true, results);
 	}
 }

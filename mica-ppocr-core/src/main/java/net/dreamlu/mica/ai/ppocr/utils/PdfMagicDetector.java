@@ -24,9 +24,9 @@ import lombok.experimental.UtilityClass;
  * <p>逻辑：PDF 规范（PDF 32000-1:2008 §7.5.2）允许 header 前有最多 1024 字节的
  * 垃圾数据，所以在前 1024 字节窗口内查找 {@code %PDF-}。
  *
- * <p>被下沉到 core 是为了让 {@code PPOcrV6Engine.run(byte[])} 在没有
- * {@code mica-ppocr-pdf} 模块时也能给出"请引入 pdf 模块"的明确提示，
- * 而不是默默把 PDF 字节当图片解码（OpenCV 会失败但报错信息不友好）。
+ * <p>被下沉到 core 是为了让 {@code PPOcrV6Engine.run(byte[])} 在没有 PDFBox 依赖时
+ * 也能给出"请引入 pdfbox"的明确提示，而不是默默把 PDF 字节当图片解码
+ * （OpenCV 会失败但报错信息不友好）。
  *
  * <p>无状态工具类，所有方法线程安全。
  */

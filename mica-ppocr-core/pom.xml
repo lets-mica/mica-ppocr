@@ -30,6 +30,16 @@
         <dependency>
             <groupId>org.apache.pdfbox</groupId>
             <artifactId>pdfbox</artifactId>
+            <!--
+                PDFBox 是可选依赖：只做图片 OCR 的项目不该被动背上 pdfbox + fontbox
+                + commons-logging 这套传递依赖。需要 PDF 双通道（文本层抽取 / 渲染兜底）
+                的项目显式引入 org.apache.pdfbox:pdfbox:3.0.8 即可。
+
+                注意：本模块自身的编译与测试仍需要它（optional 只影响向下游传递），
+                且运行时由 PdfDependency 探测是否在 classpath 上 —— 缺失时引擎收到 PDF
+                输入会抛 IllegalStateException 并提示补依赖。
+            -->
+            <optional>true</optional>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

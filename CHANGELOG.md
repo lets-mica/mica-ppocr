@@ -3,6 +3,7 @@
 ## 发行版本
 
 ### v1.2.6 - 未发布
+- refactor(core): PDF 依赖改为可选 —— `pdfbox` 在 `mica-ppocr-core` 中标记为 optional，不再向下游（structured / starter / plugin）传递，只做图片 OCR 的项目不再被动背上 pdfbox + fontbox 那套依赖。⚠️ **行为变更**：需要处理 PDF 输入的项目要显式引入 `org.apache.pdfbox:pdfbox:3.0.8`（PDF 双通道本身的行为不变）；未引入时 `run(byte[])` 收到 PDF 输入抛 `IllegalStateException` 并在消息里指明要补的依赖，不再暴露 `NoClassDefFoundError`，图片输入完全不受影响。
 - perf(core): DB 后处理的二值化改为一次 Java 遍历直出 0/255 掩码 —— 原先走 OpenCV 的 `threshold` → `Core.multiply(255)` → `convertTo(CV_8U)` 三趟链，每次 OCR 要在 native 侧过两遍 CV_32F 中间结果（约 21 MB）。DB 后处理耗时 10.2 → 6.8 ms（-33%），每次 OCR 的 native 分配/释放量降到约 2.7 MB。**框坐标与识别文本逐位不变**（二值化掩码与 OpenCV 三趟链逐位对比，含「恰好等于阈值」的边界点），回归测试见 `DbPostProcessorTest`。
 - perf(core): det / rec 预处理的归一化改为按字节值预计算查表 —— uint8 像素值只有 256 种，原先内层循环每个像素要做 3 次浮点除法，现改为 256 项查表直接取值。det 预处理耗时 20.5 → 19.4 ms。**归一化张量逐位不变**（查表用与原表达式完全相同的运算顺序求值，换成乘以倒数会让末位漂移），由三个预处理器的 bit-exact 回归测试锁定。
 - perf(core): 检测最大边长限制默认 4000 → 1920 —— `detLimitType=min` + `detLimitSideLen=64` 下这是唯一的缩放闸门，此前对 2K~4K 图几乎不生效（行驶证 2988×2199 的检测输入是 2208×2976、共 657 万像素），而检测推理占整条链路的 74%。检测耗时随之下降：行驶证 1638 → 951 ms（1.72×）、发票 1495 → 1223 ms（1.22×）、PDF 通道（forceOcr，A4@200dpi）1374 → 1149 ms（1.20×）。**行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器的字段级比对中无任何字段变为 null，6 个业务字段有单字抖动（4 变差、2 变好）；用 `detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景会被本值二次截断，需自行调大。

@@ -65,7 +65,10 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       │   ├── PdfOcrConfig.java         ← renderDpi / minTextChars / minReadableRatio / forceOcr
 │       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分）
 │       │   ├── PdfTextQuality.java       ← 文本层质量评分（字符数 + 可读占比）
-│       │   └── PdfPageResult.java        ← per-page 结果（pageIndex + viaOcr）
+│       │   ├── PdfPageResult.java        ← per-page 结果（pageIndex + viaOcr）
+│       │   ├── PdfRuntime.java           ← 唯一直接触碰 PDFBox API 的类
+│       │   ├── PdfDependency.java        ← PDFBox 可用性探测（零 PDFBox 引用）
+│       │   └── PdfOcrBridge.java         ← 渲染通道 → 引擎 OCR 链路的回调
 │       └── utils/{BoxUtil, BufferedImageUtils, CollUtil, CropUtil, ModelResourceLoader,
 │                   NdArrayUtils, Offset, OrtProviders, PdfMagicDetector}.java
 ├── mica-ppocr-structured/      ← 结构化解析模块：把 OCR 散落文字框组织成业务字段
@@ -416,6 +419,68 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
     裁剪阶段的成本几乎全在 `warpPerspective` 的 native 计算本身，不在分配。
     ⇒ 裁剪侧的「省分配」思路已证伪，别再重复排查这一项。
 
+    ✅ **全量 Mat 分配点已逐个实测（2026-11-12），全部是噪声**，
+    下表是完整清单，**别再在这些点上重复排查**：
+
+    | 位置 | 每次 OCR 的分配量 | 实测耗时 |
+    |---|---|---|
+    | `boxScore` 的 `Mat.zeros` + `MatOfPoint` | 每候选框 | 20 框合计 **0.28 ms** |
+    | `BoxUtil.orderMinAreaBoxPoints` 的 `MatOfPoint2f` + `boxMat` | 2×候选框 + 1×裁剪框 | 20 次合计 **0.077 ms** |
+    | `CropUtil.rotateCropImage` 的 src/dst/transform/cropped | 4~5 × 裁剪框 | 36 次合计 **0.022 ms** |
+    | rec 预处理的每 crop resize Mat | 每裁剪框 | 20 crop 合计 **0.007 ms** |
+    | doc_ori 的 `resizeShort` 输出 + 中心裁剪 clone | 每次 1 块（约 0.4 / 0.15 MB） | 低于缺页阈值，**不划算** |
+    | **det resize 输出 Mat（8.1 MB）** | 每次 det 1 块 | 复用**无收益**（见下） |
+    | **det 概率图 Mat（10.8 MB）** | 每次 det 1 块 | 复用**无收益**（见下） |
+    | **DB 二值化掩码 Mat（2.7 MB）** | 每次 det 1 块 | 复用**无收益**（见下） |
+    | **PDF 渲染页 BGR Mat（11.6 MB）** | 每页 1 块 | 复用**无收益**（见下） |
+    | **doc_ori 旋转整图（10.9 MB）** | 仅在判定非 0° 时 | 复用**无收益**（见下） |
+
+    ⚠️ **为什么小 Mat 复用没收益**：块小到 CRT 堆直接复用同一段地址，页始终是热的，
+    没有缺页。**大块（≳1 MB）虽然可能拿到全新未映射的页，但真实链路里这一点也拿不到**
+    —— 见下面「Mat 复用池已实测否决」。
+    ⇒ 扩池前先看**单块字节数**，别按「调用次数多」排序。
+
+- ❌ **OpenCV Mat 复用池（`MatPool`）已实测否决并撤销**（2026-11-12）：
+  曾实现过一套「按尺寸 + 类型匹配」的 Mat 复用池，覆盖 det resize 输出、det 概率图、
+  DB 二值化掩码、PDF 渲染页 BGR、doc_ori 旋转整图共 5 处，
+  **最终实测收益为 0，已连同实现、测试、文档一并撤掉**。别再重做这个方向。
+
+  ⚠️ **这个方向有一个非常逼真的假象，务必记住**：
+  孤立微基准里，`new Mat` + `put` + `release` 写 6.3 MB 要 **1.007 ms**，
+  而复用同一块缓冲写同样的数据只要 **0.249 ms** —— 差 **0.75 ms**，
+  看起来就是「首次写入新页的缺页开销」，而且配重实验（插入 96 MB 配重逼分配器给全新页）
+  证实差距确实随缺页增加（0.724 → 0.925 ms）。
+  **但这个差距在真实推理链路里完全不存在。**
+
+  **决定性实验**（把真实 ORT det 推理插进同一个微基准，其余完全相同）：
+
+  | 场景 | `new` + `put` + `release` | 池复用 | 差距 |
+  |---|---|---|---|
+  | 不含 ORT 推理 | 2.185 ms | 0.999 ms | **1.187 ms** |
+  | **含 ORT det 推理** | 220.488 ms | 220.487 ms | **0.001 ms** |
+
+  ⇒ **一旦链路里有 ORT 推理，CRT 堆上的内存流动就让那块缓冲始终保持 committed，
+  「免缺页」的好处一分钱也拿不到。** 微基准之所以骗人，是因为它测量的是
+  「堆上只有这一块大 buffer 在流动」的孤立情形，与真实链路（ORT arena 反复分配/释放）
+  的堆状态完全不同。
+
+  **真实引擎的最终 A/B**（det 阶段，同引擎逐块交错、开/关各 20 次 × 20 块）：
+  开复用中位 **360.728 ms/次**、关复用中位 **361.668 ms/次**，
+  配对差中位 **-0.606 ms/次**，**开复用更快的块 9/20** —— 等于抛硬币，
+  效应量落在 ±3 ms 的块间噪声里，测不出来。
+
+  ⚠️ **代价却是实打实的**：池上限 64 MiB，跑一遍 44 张异构样图后常驻 **60.0 MB**
+  native 内存（命中 65.9%，其余是尺寸不匹配的 miss）；而收益为 0。
+  ⇒ 纯亏：**用 60 MB 常驻 native 内存换 0 收益**，还多了 5 处「归还池 vs release」
+  的正确性负担（漏归还 = 泄漏，误 release = use-after-free）。已撤销。
+
+  ⚠️ **方法论教训（比结论本身更重要）**：这次的坑是**「微基准的效应 ≈ 真实链路的效应」
+  这个假设根本不成立**。做 OpenCV 层的性能优化时：
+  - 微基准只用来**排除**方向（分配本身便宜、小块无收益），**不能用来证明收益**；
+  - 收益必须落在**真实调用链**上测，且中途不能有「会冲掉缓存 / 改变堆状态」的大动作；
+  - A/B 的开/关两侧必须**共享同一份 JIT、同一份缓存、同一份堆状态**，
+    否则测到的差异可能全部来自被控变量之外的东西。
+
 - **`preprocessor/RecognitionPreprocessor`** — batches crops, resizes, pads to common width.
 
   - ✅ 归一化同样改用 256 项查表（`v / 127.5f - 1.0f`），算术层改动，
@@ -437,6 +502,30 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - `OrtProviders` — picks the ORT execution provider；`PPOcrV6Config.preferAccelerator`
     默认 `false`（即强制 CPU，保证跨平台 bit-exact），置 `true` 时按
     CoreML (macOS) > CUDA > CPU 顺序探测。
+
+### PDF 双通道：依赖可选 + 类加载隔离（改引擎时必须保留）
+
+**PDFBox 是可选依赖**（`mica-ppocr-core/pom.xml` 里 `<optional>true</optional>`）——
+只做图片 OCR 的项目不该被动背上 pdfbox + fontbox + commons-logging。
+`mica-ppocr-structured` / starter / plugin **不再向下游传递** pdfbox；
+需要处理 PDF 输入的项目显式引入 `org.apache.pdfbox:pdfbox:3.0.8` 即可。
+
+⚠️ **类加载隔离是这条约束的技术前提，改引擎时必须保留**：
+
+- **`PdfRuntime` 是唯一允许直接触碰 PDFBox API 的类**（`Loader` / `PDDocument` /
+  `PDFRenderer` / `ImageType` / `PdfTextExtractor`）。引擎侧一律不出现这些类型。
+- **`PdfDependency` 刻意不引用任何 PDFBox 类型**（只用类名字符串 `org.apache.pdfbox.Loader` 探测）。
+  若把探测逻辑与 PDFBox 类型写进同一个类，该类链接时的字节码校验就会连带加载 PDFBox ——
+  缺依赖时会在探测跑起来之前先抛 `NoClassDefFoundError`。
+- **`PPOcrV6Engine` 通过私有嵌套类 `PdfRuntimeHolder` 延迟链接 `PdfRuntime`**：
+  引擎的常量池里不出现任何 PDFBox 类型，缺依赖时引擎自身照常构造、照常跑图片 OCR。
+  ⚠️ **不要图省事把 `PdfRuntime` 直接写回引擎方法里** —— 那会让「只跑图片」的项目直接起不来。
+- 缺依赖时引擎收到 PDF 输入抛 **`IllegalStateException`**（消息指明要补的依赖），
+  不是 `NoClassDefFoundError`；`run(...)` 的「unchecked、免 try-catch」契约不变。
+
+回归护栏：`mica-ppocr-core/src/test/java/net/dreamlu/mica/ai/ppocr/pdf/PdfOptionalDependencyTest.java`
+—— ①缺依赖报错可读 ②缺依赖不影响图片推理 ③引擎 class 文件里**没有** PDFBox 类引用
+（常量池里的类引用是 `org/apache/pdfbox/...` 斜杠形式；错误文案里的依赖坐标是点分字符串常量，不算）。
 
 ### mica-ppocr-structured
 
@@ -823,7 +912,7 @@ Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
 | onnxruntime              | 1.18.0                                                    | 52 | Java 8  |
 | opencv (openpnp)         | 4.9.0-0                                                   | 52 | Java 8  |
 | jts-core                 | 1.20.0                                                    | 52 | Java 8  |
-| pdfbox                   | 3.0.8（PDF 双通道依赖，随 core 传递；下游不需要可 exclude）          | 52 | Java 8  |
+| pdfbox                   | 3.0.8（PDF 双通道依赖，**optional：不向下游传递**，需要时显式引入）      | 52 | Java 8  |
 | slf4j-api                | 2.0.20                                                    | 52 | Java 8  |
 | slf4j-simple             | 2.0.20（**test scope only** —— 替代原 logback-classic 1.3.15） | 52 | Java 8  |
 | lombok                   | 1.18.48                                                   | 52 | Java 8  |

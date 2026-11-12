@@ -20,7 +20,7 @@
 | 零 Paddle 依赖 | 纯 ONNX Runtime 推理，Java 8 兼容，Windows / Linux / macOS 原生库随 Maven 引入 |
 | 结构化解析 | 行驶证 / 身份证 / 银行卡 / 驾驶证 / 营业执照 / 发票 / 火车票 / 出租车票 / 户口本 / 拼多多福袋 共 10 类 |
 | 声明式 schema | 新增单据类型写一份 schema 即可抽字段，无需再实现解析器类 |
-| PDF 双通道 | 文字型 PDF 直接抽文本层，扫描件自动降级为渲染 + OCR |
+| PDF 双通道 | 文字型 PDF 直接抽文本层，扫描件自动降级为渲染 + OCR（需额外引入 pdfbox） |
 | 方向校正 | doc_ori 模型 4 方向分类，检测前整图旋转 |
 | 字段级置信度 | 校验位三态（PASS / FAIL / UNCHECKABLE）+ 人工复核出口 |
 | 框架接入 | Spring Boot Starter（自动装配）与 Solon Plugin |
@@ -33,7 +33,7 @@
 | ONNX Runtime | 1.18.0 | 此版本内置的原生库可兼容更多操作系统版本     |
 | OpenCV       | 4.9.0-0 | 含 Windows/Linux/macOS 原生库 |
 | JTS          | 1.20.0 | 多边形偏移（pyclipper 等价物）     |
-| PDFBox       | 3.0.8  | PDF 双通道（文本层抽取 + 渲染兜底）  |
+| PDFBox       | 3.0.8  | PDF 双通道（文本层抽取 + 渲染兜底），**可选**，按需引入  |
 
 ## 3. 模型目录
 
@@ -102,6 +102,24 @@
     <version>${mica.ppocr.version}</version>
 </dependency>
 ```
+
+**PDF 双通道（可选依赖）**
+
+只做图片 OCR 的项目**不需要**额外引入任何东西 —— PDFBox 不再随 `mica-ppocr-core` 传递，
+starter / plugin 用户也不会被动背上 pdfbox + fontbox 这套依赖。
+
+需要处理 PDF 输入（文字型 PDF 抽文本层、扫描件渲染兜底）时，额外引入一个即可：
+
+```xml
+<dependency>
+    <groupId>org.apache.pdfbox</groupId>
+    <artifactId>pdfbox</artifactId>
+    <version>3.0.8</version>
+</dependency>
+```
+
+未引入时，`run(byte[])` 收到 PDF 输入会抛 `IllegalStateException`，并在消息里指明要补的依赖
+（不会抛 `NoClassDefFoundError`）；图片输入不受任何影响。
 
 ## 5. 快速开始
 

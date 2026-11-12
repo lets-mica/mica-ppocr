@@ -178,8 +178,12 @@ public class PPOCRProperties implements PPOcrV6Config.Source {
 	private boolean enableMemoryPattern = false;
 
 	/**
-	 * PDF 通道配置（PDF 能力随 {@code mica-ppocr-core} 内置的 PDFBox 通道提供，
+	 * PDF 通道配置（PDF 双通道能力内置在 {@code mica-ppocr-core}，
 	 * 原独立的 {@code mica-ppocr-pdf} 模块已并入 core）。
+	 *
+	 * <p>⚠️ <b>PDFBox 是可选依赖</b>，不再随 starter 传递：需要处理 PDF 输入的项目
+	 * 要显式引入 {@code org.apache.pdfbox:pdfbox:3.0.8}，否则引擎收到 PDF 输入会抛
+	 * {@link IllegalStateException} 提示补依赖（图片输入不受影响）。
 	 *
 	 * <p>本子配置会被转换成 {@link PdfOcrConfig}，经 {@link PPOcrV6Config} 传给
 	 * {@link net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine}，
