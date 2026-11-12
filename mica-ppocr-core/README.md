@@ -237,7 +237,7 @@ Spring Boot / Solon 两端的 yml 配置项与之逐项对应（kebab-case ↔ c
 | `NdArrayUtils` | argmax / max / stack / pad / clip 等张量操作 |
 | `BoxUtil` | `sortQuadBoxes`（阅读顺序）、最小面积外接矩形 / 四点 |
 | `CropUtil` | 透视变换裁剪；**无效裁剪返回 `null`**，调用方需过滤 |
-| `Offset` | pyclipper `PyclipperOffset` 等价实现（JTS `BufferOp` + `JOIN_ROUND`）；面积 / 周长为纯 Java 实现 |
+| `Offset` | pyclipper `PyclipperOffset` 等价实现（纯 Java 圆角外扩，**零第三方依赖**）；面积 / 周长为纯 Java 实现 |
 | `ModelResourceLoader` | 模型 / 字典资源加载 |
 | `OrtProviders` | ORT 执行 Provider 探测 |
 | `PdfMagicDetector` | `%PDF-` 魔数嗅探 |

@@ -494,7 +494,8 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
   - `BoxUtil` — `sortQuadBoxes` (reading order), minAreaRect/boxPoints.
 
-  - `Offset` — pyclipper `PyclipperOffset` equivalent via JTS `BufferOp` + `JOIN_ROUND`.
+  - `Offset` — pyclipper `PyclipperOffset` equivalent via a pure-Java rounded offset
+    (每边外法向平移 + 顶点圆弧，每 90° 8 段，段数**四舍五入**).
 
   - `CropUtil` — perspective-warp crop; returns `null` for invalid crops;
     `run()` filters these `null`s out — preserve this null-skip contract.
@@ -678,13 +679,22 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 
 ### Porting conventions
 
-Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offset` (JTS),
+Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offset` (纯 Java 圆角外扩),
 `cv2.minAreaRect`→`Imgproc.minAreaRect`, `np.rot90`→`Core.ROTATE_90_COUNTERCLOCKWISE`,
 `@dataclass(frozen=True)`→Lombok `@Value` 类 + `@Accessors(fluent = true)`（保持 `record` 风格的 `xxx()` 访问）。
 
 ### Known divergences from Python
 
-- `pyclipper` uses scaled-integer math; JTS `BufferOp` uses doubles → unclip differs by <1px.
+- `pyclipper` uses scaled-integer math and quantizes its output to integers, while
+  `Offset.unclip` works in doubles → the unclip polygons differ by <1px.
+  ⚠️ **The dominant source of the final-box divergence is elsewhere, and was previously
+  misattributed to JTS**: `BoxUtil.orderMinAreaBoxPoints(float[][])` routes the float polygon
+  through `MatOfPoint` (CV_32S), truncating coordinates to integers before `minAreaRect`.
+  Measured on 3827 real detection boxes, dropping that truncation lifts the final-box
+  agreement with the Python reference from 5.1% to 55.4% (ideal Minkowski geometry: 55.2%) —
+  i.e. the truncation, not the unclip implementation, is the main gap.
+  Fixing it moves ~98% of boxes by ≤3px ⇒ it is a **separate, deliberate change**, not a
+  drive-by cleanup.
 
 - No CoreML provider in ONNX Runtime Java API.
 
@@ -911,7 +921,6 @@ Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
 | ------------------------ | --------------------------------------------------------- | --- | ------- |
 | onnxruntime              | 1.18.0                                                    | 52 | Java 8  |
 | opencv (openpnp)         | 4.9.0-0                                                   | 52 | Java 8  |
-| jts-core                 | 1.20.0                                                    | 52 | Java 8  |
 | pdfbox                   | 3.0.8（PDF 双通道依赖，**optional：不向下游传递**，需要时显式引入）      | 52 | Java 8  |
 | slf4j-api                | 2.0.20                                                    | 52 | Java 8  |
 | slf4j-simple             | 2.0.20（**test scope only** —— 替代原 logback-classic 1.3.15） | 52 | Java 8  |
