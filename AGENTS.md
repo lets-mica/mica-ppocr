@@ -383,12 +383,43 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
     附：整块读要求 `byte[]` 长度**精确等于** `h*w*channels` —— OpenCV 只校验「长度是通道数倍数」，
     传大了会越界读（就是 `RecognitionPreprocessor` javadoc 里警告的「跨行读」陷阱）。
 
+  - ✅ **归一化改用 256 项查表**（2026-11-12）：uint8 像素值只有 256 种，
+    而归一化公式的入参是离散的 ⇒ 把表达式**按字节值预先求值**成查表，
+    内层循环从「3 次浮点乘 + 3 次浮点减 + 3 次浮点除」降为「3 次数组取值」。
+    det 预处理 20.5 → 19.4 ms。
+    ⚠️ **查表项必须用与原表达式完全相同的运算顺序求值**
+    （det：`(v * scale - mean) / std`；rec：`v / 127.5f - 1.0f`），
+    **换成乘以倒数会让末位漂移**（实测 `0.3651854` → `0.36518544`），
+    det / rec 输入不再与 Python 参考实现 bit-exact ⇒ 由三个预处理器的 bit-exact 回归测试拦下。
+    ⚠️ 这是**算术**层改动，与上面那条「逐行读 vs 整块读」的**读取策略**红线无关，两者互不冲突。
+
 - **`postprocessor/DbPostProcessor`** — DB binary-map → contours → boxes。
   配合 [`DbDetParams`](mica-ppocr-core/src/main/java/net/dreamlu/mica/ai/ppocr/postprocessor/DbDetParams.java) 不可变值对象，
   通过 `engine.detectMat(Mat, DbDetParams)` 可按调用临时覆盖阈值（thresh/boxThresh/unclipRatio），
   引擎不修改任何共享状态，并发安全（[issue #24](https://github.com/lets-mica/mica-ppocr/issues/24)）。
 
+  - ✅ **二值化改为一次 Java 遍历直出 0/255 掩码**（2026-11-12）：
+    原先走 OpenCV 的 `threshold` → `Core.multiply(255)` → `convertTo(CV_8U)` 三趟链，
+    每次 OCR 要在 native 侧过两遍 CV_32F 中间结果（约 21 MB）；
+    三趟链的语义等价于一句话 `u8[i] = (prob[i] > thresh) ? 255 : 0`，
+    直出后 DB 后处理 10.2 → 6.8 ms（-33%），native 分配/释放量降到约 2.7 MB。
+    ⚠️ 阈值比较是**严格大于**（与 `THRESH_BINARY` 一致）：`prob[i] == thresh` 取 0（背景）。
+    ⚠️ 掩码**逐行写入**而非攒成整块 `byte[]` 再一次 put：两者耗时相当（6.7 vs 6.8 ms），
+    但整块写法每次多分配一份 h×w 的 Java 堆数组（1920×1408 即 2.7 MB），逐行写法只用一行缓冲。
+    回归测试见 `DbPostProcessorTest`（掩码与 OpenCV 三趟链逐位对比 + 框坐标 golden）。
+
+  - ⚠️ **不要再提「crop arena」与「可复用 scratch」**（2026-11-12 实测否决）：
+    lw.PPOCR.Java 的 `PerspectiveCrop.Workspace.cropAll`（多框裁剪共享 byte[] arena）
+    与 `DbPostprocess.Decoder`（常驻 scratch 实例）这两个借鉴点，实测收益为
+    **36 次 `new Mat` + release 仅 0.022 ms**（裁剪阶段总耗时约 30 ms）、
+    复用掩码 Mat 仅额外省 0.55 ms —— **都在噪声级别**。
+    裁剪阶段的成本几乎全在 `warpPerspective` 的 native 计算本身，不在分配。
+    ⇒ 裁剪侧的「省分配」思路已证伪，别再重复排查这一项。
+
 - **`preprocessor/RecognitionPreprocessor`** — batches crops, resizes, pads to common width.
+
+  - ✅ 归一化同样改用 256 项查表（`v / 127.5f - 1.0f`），算术层改动，
+    逐位等价约束与 `DetectionPreprocessor` 的 LUT 同理（见上）。
 
 - **`postprocessor/CtcLabelDecoder`** — loads char dict, CTC greedy decode → text + score.
 

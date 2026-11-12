@@ -53,6 +53,21 @@ public final class DetectionPreprocessor {
 	private static final Scalar STD = new Scalar(0.229, 0.224, 0.225);
 	private static final int STRIDE = 32;
 
+	/**
+	 * 归一化查找表（B / G / R 各 256 项）。
+	 *
+	 * <p>uint8 像素值只有 256 种，而归一化公式 {@code (v * scale - mean) / std} 的入参是离散的
+	 * ⇒ 可以把表达式<b>按字节值预先求值</b>成查表，内层循环从「3 次浮点乘 + 3 次浮点减 +
+	 * 3 次浮点除」降为「3 次数组取值」。实测 det 预处理整体 20.5 → 19.4 ms（1920×1408 输入）。
+	 *
+	 * <p>⚠️ <b>必须逐位等价</b>：查表项用与原表达式<b>完全相同</b>的运算顺序求值
+	 * （{@code (v * scale - mean) / std}，v 为 int，scale / mean / std 为 float），
+	 * 任何改写（哪怕换成乘以倒数）都会让末位漂移，det 输入不再与 Python 参考实现 bit-exact。
+	 */
+	private static final float[] LUT_B = buildNormalizeLut(0);
+	private static final float[] LUT_G = buildNormalizeLut(1);
+	private static final float[] LUT_R = buildNormalizeLut(2);
+
 	private final int limitSideLen;
 	private final String limitType;
 	private final int maxSideLimit;
@@ -199,21 +214,36 @@ public final class DetectionPreprocessor {
 	}
 
 	/**
+	 * 构造归一化查表（按通道）。
+	 *
+	 * <p>运算顺序与生产代码的内联表达式严格一致，保证逐位等价。
+	 *
+	 * @param channel 通道下标：0=B、1=G、2=R
+	 * @return 长度 256 的查表
+	 */
+	private static float[] buildNormalizeLut(int channel) {
+		float mean = (float) MEAN.val[channel];
+		float std = (float) STD.val[channel];
+		float[] lut = new float[256];
+		for (int v = 0; v < 256; v++) {
+			lut[v] = (v * SCALE - mean) / std;
+		}
+		return lut;
+	}
+
+	/**
 	 * 3 通道（BGR）快速路径：mean/std 按通道索引固定取 B/G/R 三档。
 	 */
 	private void normalizeToChwBgr(Mat src, float[] chw, int h, int w, int hw, byte[] rowBuf) {
-		float scale = SCALE;
-		float meanB = (float) MEAN.val[0], meanG = (float) MEAN.val[1], meanR = (float) MEAN.val[2];
-		float stdB = (float) STD.val[0], stdG = (float) STD.val[1], stdR = (float) STD.val[2];
 		for (int r = 0; r < h; r++) {
 			src.get(r, 0, rowBuf);
 			int rowBase = r * w;
 			for (int col = 0; col < w; col++) {
 				int i = rowBase + col;
 				int b = col * 3;
-				chw[i] = ((rowBuf[b] & 0xFF) * scale - meanB) / stdB;
-				chw[hw + i] = ((rowBuf[b + 1] & 0xFF) * scale - meanG) / stdG;
-				chw[2 * hw + i] = ((rowBuf[b + 2] & 0xFF) * scale - meanR) / stdR;
+				chw[i] = LUT_B[rowBuf[b] & 0xFF];
+				chw[hw + i] = LUT_G[rowBuf[b + 1] & 0xFF];
+				chw[2 * hw + i] = LUT_R[rowBuf[b + 2] & 0xFF];
 			}
 		}
 	}

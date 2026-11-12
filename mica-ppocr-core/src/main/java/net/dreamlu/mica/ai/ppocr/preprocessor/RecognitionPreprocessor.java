@@ -55,6 +55,27 @@ public final class RecognitionPreprocessor {
 	 */
 	public static final int W_MAX = 3200;
 
+	/**
+	 * 归一化查找表（256 项，三个通道共用）。
+	 *
+	 * <p>uint8 像素值只有 256 种，而归一化公式 {@code v / 127.5 - 1} 的入参是离散的
+	 * ⇒ 可以把表达式<b>按字节值预先求值</b>成查表，内层循环从「3 次浮点除 + 3 次浮点减」
+	 * 降为「3 次数组取值」。
+	 *
+	 * <p>⚠️ <b>必须逐位等价</b>：查表项用与原表达式<b>完全相同</b>的运算顺序求值
+	 * （{@code v / 127.5f - 1.0f}，v 为 int），换成乘以倒数会让末位漂移，
+	 * rec 输入不再与 Python 参考实现 bit-exact。
+	 */
+	private static final float[] NORM_LUT = buildNormLut();
+
+	private static float[] buildNormLut() {
+		float[] lut = new float[256];
+		for (int v = 0; v < 256; v++) {
+			lut[v] = v / 127.5f - 1.0f;
+		}
+		return lut;
+	}
+
 	private final int h;
 	private final int wMin;
 	private final int wMax;
@@ -206,9 +227,9 @@ public final class RecognitionPreprocessor {
 				int rowOff = r * maxW;
 				for (int col = 0; col < actualW; col++) {
 					int b = col * CHANNELS;
-					data[destBase + rowOff + col] = (rowBuf[b] & 0xFF) / 127.5f - 1.0f;
-					data[c1 + rowOff + col] = (rowBuf[b + 1] & 0xFF) / 127.5f - 1.0f;
-					data[c2 + rowOff + col] = (rowBuf[b + 2] & 0xFF) / 127.5f - 1.0f;
+					data[destBase + rowOff + col] = NORM_LUT[rowBuf[b] & 0xFF];
+					data[c1 + rowOff + col] = NORM_LUT[rowBuf[b + 1] & 0xFF];
+					data[c2 + rowOff + col] = NORM_LUT[rowBuf[b + 2] & 0xFF];
 				}
 			}
 		} finally {
