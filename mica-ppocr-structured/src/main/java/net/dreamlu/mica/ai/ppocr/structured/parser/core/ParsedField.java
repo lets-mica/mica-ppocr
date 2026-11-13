@@ -16,8 +16,13 @@
 
 package net.dreamlu.mica.ai.ppocr.structured.parser.core;
 
-import lombok.Value;
+import lombok.EqualsAndHashCode;
+import lombok.Getter;
+import lombok.ToString;
 import lombok.experimental.Accessors;
+import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
+
+import java.util.List;
 
 /**
  * 字段解析结果：值 + 取值来源 + OCR 置信度。
@@ -29,36 +34,68 @@ import lombok.experimental.Accessors;
  * @see FieldConfidence
  * @see FieldSource
  */
-@Value
+@Getter
+@EqualsAndHashCode
+@ToString
 @Accessors(fluent = true)
 public class ParsedField {
 
 	/**
 	 * 字段值；未取到时为 null。
 	 */
-	String value;
+	private final String value;
 
 	/**
 	 * 取值来源。
 	 */
-	FieldSource source;
+	private final FieldSource source;
 
 	/**
 	 * OCR 原始置信度（值来自 OCR 文本框时可得）；推算 / 回填时为 null。
 	 */
-	Float ocrScore;
+	private final Float ocrScore;
 
 	/**
-	 * 构造解析结果。
+	 * 该字段值所依据的 OCR 框坐标列表（每个 {@code int[][]} 是一个 4 顶点框）。
+	 *
+	 * <p>取值路径上带框的字段（标签定位 / 正则兜底）才有；推算（DERIVED）、
+	 * 回填（BACKFILL）、未取到（MISSING）为空列表。
+	 *
+	 * <p>有了它，解析器就能把「字段值 → 原文框」的定位关系往上游传，
+	 * 无需在解析器里二次调用标签定位（既省一次全表扫描，也避免两次定位结果不一致）。
+	 *
+	 * <p><b>不参与 equals / hashCode / toString</b>：{@code ParsedField} 的身份是
+	 * 「值 + 来源 + 置信度」，框坐标属于定位元数据（数组的 equals 是引用比较，
+	 * 参与比较会让语义失真；toString 里打印数组只会得到无意义的引用哈希）。
+	 */
+	@EqualsAndHashCode.Exclude
+	@ToString.Exclude
+	private final List<int[][]> boxes;
+
+	/**
+	 * 构造解析结果（不含框坐标）。
 	 *
 	 * @param value    字段值
 	 * @param source   取值来源
 	 * @param ocrScore OCR 原始置信度，可为 null
 	 */
 	public ParsedField(String value, FieldSource source, Float ocrScore) {
+		this(value, source, ocrScore, null);
+	}
+
+	/**
+	 * 构造解析结果（含框坐标）。
+	 *
+	 * @param value    字段值
+	 * @param source   取值来源
+	 * @param ocrScore OCR 原始置信度，可为 null
+	 * @param boxes    该字段依据的 OCR 框坐标列表，可为 null
+	 */
+	public ParsedField(String value, FieldSource source, Float ocrScore, List<int[][]> boxes) {
 		this.value = value;
 		this.source = source == null ? FieldSource.MISSING : source;
 		this.ocrScore = ocrScore;
+		this.boxes = boxes == null ? CollUtil.listOf() : boxes;
 	}
 
 	/**

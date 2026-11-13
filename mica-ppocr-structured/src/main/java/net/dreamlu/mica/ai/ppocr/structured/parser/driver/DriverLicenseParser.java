@@ -627,13 +627,20 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 		String[] period = parseValidPeriod(results);
 
 		r.setLicenseNumber(licenseNumber.value());
+		LabelMatcher.applyFieldBox(r, "licenseNumber", licenseNumber);
 		r.setName(name.value());
+		LabelMatcher.applyFieldBox(r, "name", name);
 		r.setGender(gender.value());
+		// 性别若由证号回填而来，ParsedField 里没有框 —— 此时不回填 fieldBoxes
+		LabelMatcher.applyFieldBox(r, "gender", gender);
 		r.setNationality(nationality);
 		r.setAddress(address);
 		r.setBirthDate(birthDate.value());
+		LabelMatcher.applyFieldBox(r, "birthDate", birthDate);
 		r.setIssueDate(issueDate.value());
+		LabelMatcher.applyFieldBox(r, "issueDate", issueDate);
 		r.setVehicleClass(vehicleClass.value());
+		LabelMatcher.applyFieldBox(r, "vehicleClass", vehicleClass);
 		r.setIssuingAuthority(issuingAuthority);
 		if (period != null) {
 			r.setValidFrom(period[0]);

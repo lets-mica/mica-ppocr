@@ -64,6 +64,10 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 	 */
 	private static final Pattern VALID_DATE_PATTERN = Pattern.compile("(0?[1-9]|1[0-2])/\\d{2,4}");
 	/**
+	 * 有效期的候选标签（按优先级）：合并框兜底时逐个尝试剥值。
+	 */
+	private static final String[] VALID_DATE_LABELS = {"VALID THRU", "MONTH/YEAR", "月/年"};
+	/**
 	 * 持卡人：大写英文 + 空格 + 可选 ". "。
 	 */
 	private static final Pattern HOLDER_NAME_PATTERN = Pattern.compile("[A-Z][A-Z. ]{2,30}[A-Z.]");
@@ -127,6 +131,16 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 
 	/**
 	 * 有效期提取：按"VALID THRU"/"MONTH/YEAR"/"月/年" 标签定位 + MM/YY 正则兜底。
+	 *
+	 * <p>三条取值路径依次兜底：
+	 * <ol>
+	 *   <li>独立标签框 → 右侧值框（{@code matchValueWithBox}）</li>
+	 *   <li>内容正则全匹配（{@code matchPatternWithBox}）</li>
+	 *   <li><b>合并框剥值</b>（{@code matchValueFromPrefixWithBox}）——
+	 *       卡面"VALID THRU 12/25"被 OCR 合成一框时，前两条路径都取不到：
+	 *       标签框本身就含值，右侧没有独立值框；而正则兜底是<b>全匹配</b>语义，
+	 *       "VALID THRU 12/25" 匹配不上 {@code (0?[1-9]|1[0-2])/\d{2,4}}。</li>
+	 * </ol>
 	 */
 	private static ParsedField parseValidDate(List<PPOcrV6Result> results) {
 		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "VALID THRU");
@@ -142,6 +156,13 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		LabelMatcher.LabeledMatch fallback = LabelMatcher.matchPatternWithBox(results, VALID_DATE_PATTERN, false);
 		if (fallback.hasValue()) {
 			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
+		}
+		// 合并框兜底：剥出的值同样要过一遍日期正则，避免剥出错误片段
+		for (String label : VALID_DATE_LABELS) {
+			LabelMatcher.LabeledMatch merged = LabelMatcher.matchValueFromPrefixWithBox(results, label);
+			if (merged.hasValue() && VALID_DATE_PATTERN.matcher(merged.value()).matches()) {
+				return LabelMatcher.toParsedField(merged, FieldSource.LABEL);
+			}
 		}
 		return ParsedField.missing();
 	}
@@ -221,7 +242,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		// 按 minY 升序，取最顶部的
 		candidates.sort((a, b) -> Integer.compare(LabelMatcher.minY(a), LabelMatcher.minY(b)));
 		PPOcrV6Result top = candidates.get(0);
-		return ParsedField.pattern(top.text(), top.score());
+		return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of(top.text(), top), FieldSource.PATTERN);
 	}
 
 	/**
@@ -234,14 +255,22 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		// 1) 中文优先：扫描所有框，找含"借记卡"或"信用卡"子串的文本
 		for (PPOcrV6Result r : results) {
 			String text = r.text();
-			if (text.contains("借记卡")) return ParsedField.pattern("借记卡", r.score());
-			if (text.contains("信用卡")) return ParsedField.pattern("信用卡", r.score());
+			if (text.contains("借记卡")) {
+				return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of("借记卡", r), FieldSource.PATTERN);
+			}
+			if (text.contains("信用卡")) {
+				return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of("信用卡", r), FieldSource.PATTERN);
+			}
 		}
 		// 2) 英文兜底：扫描所有框，找含 DEBIT 或 CREDIT 子串的文本（大小写不敏感）
 		for (PPOcrV6Result r : results) {
 			String text = r.text().toUpperCase();
-			if (text.contains("DEBIT")) return ParsedField.pattern("DEBIT", r.score());
-			if (text.contains("CREDIT")) return ParsedField.pattern("CREDIT", r.score());
+			if (text.contains("DEBIT")) {
+				return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of("DEBIT", r), FieldSource.PATTERN);
+			}
+			if (text.contains("CREDIT")) {
+				return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of("CREDIT", r), FieldSource.PATTERN);
+			}
 		}
 		log.warn("银行卡解析：未匹配到卡片类型");
 		return ParsedField.missing();
@@ -257,10 +286,15 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		ParsedField bankName = parseBankName(results);
 		ParsedField cardType = parseCardType(results);
 		r.setCardNumber(cardNumber.value());
+		LabelMatcher.applyFieldBox(r, "cardNumber", cardNumber);
 		r.setValidDate(validDate.value());
+		LabelMatcher.applyFieldBox(r, "validDate", validDate);
 		r.setHolderName(holderName.value());
+		LabelMatcher.applyFieldBox(r, "holderName", holderName);
 		r.setBankName(bankName.value());
+		LabelMatcher.applyFieldBox(r, "bankName", bankName);
 		r.setCardType(cardType.value());
+		LabelMatcher.applyFieldBox(r, "cardType", cardType);
 
 		// —— 正确性层：Luhn 校验 + 字段级置信度 ——
 		// 卡号 Luhn 不通过 = 至少认错了一个数字，置信度直接归零并标记需复核。

@@ -263,4 +263,25 @@ class DriverLicenseParserTest extends ParserTestSupport {
 		assertEquals(0d, fc.score(), 1e-9);
 		assertTrue(r.isNeedsReview());
 	}
+
+	@Test
+	void parse_fieldBoxes_populated() {
+		List<PPOcrV6Result> results = buildSampleOcr(
+			"210282198809294228",  // 证号
+			"测试甲",              // 姓名
+			"女",                  // 性别
+			"中国",                // 国籍
+			"测试省甲市甲区甲路", // 住址
+			"1988-09-29",          // 出生日期
+			"2015-05-18",          // 初次领证日期
+			"C1",                  // 准驾车型
+			"某市公安局", "某分局", "", "2015-05-18-2035-05-18");
+		DriverLicenseResult r = parse(new DriverLicenseParser(null), results);
+		assertNotNull(r);
+		assertNotNull(r.getFieldBoxes().get("licenseNumber"), "证号应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("name"), "姓名应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("birthDate"), "出生日期应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("issueDate"), "初次领证日期应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("vehicleClass"), "准驾车型应回填 fieldBoxes");
+	}
 }

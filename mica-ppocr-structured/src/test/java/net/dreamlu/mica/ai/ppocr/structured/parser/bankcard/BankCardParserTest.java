@@ -182,4 +182,40 @@ class BankCardParserTest extends ParserTestSupport {
 		assertTrue(fc.needsReview());
 		assertTrue(r.isNeedsReview());
 	}
+
+	@Test
+	void parse_validDateInMergedLabelBox_extractedFromPrefix() {
+		// 卡面 "VALID THRU 12/25" 被 OCR 合成一框：没有独立的值框，
+		// 而正则兜底是「全匹配」语义、匹配不上整框文本 ⇒ 靠合并框剥值兜底。
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("华夏银行", 160, 60, 300, 90),
+			box("借记卡 DEBIT CARD", 220, 130, 460, 160),
+			box("6230 2020 1852 1255", 90, 290, 700, 360),
+			box("VALID THRU 12/25", 200, 380, 360, 400),
+			box("MR.CWENTA", 90, 430, 230, 460)
+		);
+		BankCardResult r = parse(new BankCardParser(null), results);
+		assertNotNull(r);
+		assertEquals("12/25", r.getValidDate());
+	}
+
+	@Test
+	void parse_fieldBoxes_populated() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("华夏银行", 160, 60, 300, 90),
+			box("借记卡 DEBIT CARD", 220, 130, 460, 160),
+			box("6230 2020 1852 1255", 90, 290, 700, 360),
+			box("VALID THRU", 200, 380, 290, 400),
+			box("MONTH/YEAR", 360, 380, 480, 400),
+			box("12/27", 510, 380, 570, 400),
+			box("MR.CWENTA", 90, 430, 230, 460)
+		);
+		BankCardResult r = parse(new BankCardParser(null), results);
+		assertNotNull(r);
+		assertNotNull(r.getFieldBoxes().get("cardNumber"), "卡号应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("validDate"), "有效期应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("holderName"), "持卡人应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("bankName"), "发卡行应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("cardType"), "卡片类型应回填 fieldBoxes");
+	}
 }

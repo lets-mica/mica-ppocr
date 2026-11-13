@@ -197,4 +197,36 @@ class HouseholdRegisterParserTest extends ParserTestSupport {
 		// 登记日期:合并框"2019年11月11" + "日"（分开）
 		assertEquals("2019年11月11日", r.getRegistrationDate());
 	}
+
+	@Test
+	void parse_fieldBoxes_registeredOnlyWhenValuePresent() throws IOException {
+		// 回归：fieldBoxes 里登记的字段，其结果值必须非空。
+		// 修复前「标签在、值没取到」时也会登记框 ⇒ 可视化会高亮一个空字段。
+		HouseholdRegisterResult r = parse(new HouseholdRegisterParser(null), load("household_register1"));
+		assertNotNull(r);
+		assertFalse(r.getFieldBoxes().isEmpty(), "字段框应已回填");
+		for (java.util.Map.Entry<String, List<int[][]>> entry : r.getFieldBoxes().entrySet()) {
+			String field = entry.getKey();
+			assertFalse(entry.getValue().isEmpty(), "fieldBoxes[" + field + "] 的框列表不应为空");
+			assertNotNull(fieldValue(r, field), "fieldBoxes[" + field + "] 登记了一个空字段");
+		}
+	}
+
+	/**
+	 * 按字段名取结果值（fieldBoxes 的 key 与结果属性名一一对应）。
+	 *
+	 * @param r     解析结果
+	 * @param field 字段名
+	 * @return 字段值；取不到时返回 null
+	 */
+	private static String fieldValue(HouseholdRegisterResult r, String field) {
+		try {
+			java.lang.reflect.Method getter = HouseholdRegisterResult.class
+				.getMethod("get" + Character.toUpperCase(field.charAt(0)) + field.substring(1));
+			Object value = getter.invoke(r);
+			return value == null ? null : String.valueOf(value);
+		} catch (ReflectiveOperationException e) {
+			return null;
+		}
+	}
 }

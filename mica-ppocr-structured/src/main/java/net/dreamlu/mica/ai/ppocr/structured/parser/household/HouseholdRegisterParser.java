@@ -89,6 +89,65 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 	 */
 	private static final Pattern NATION_PATTERN = Pattern.compile("[\\u4e00-\\u9fa5]{1,4}族|^汉$");
 
+	// ---------------------------------------------------------------------
+	// 高频小正则：原先写在 String#matches / String#replaceAll 的实参里，
+	// 每次调用都会重新编译同一份正则（matches 约 119ns、replaceAll 约 184ns）。
+	// 提为类常量后分别降到约 22ns / 86ns。
+	// 语义等价：String#matches(r) ≡ Pattern.compile(r).matcher(s).matches()；
+	//           String#replaceAll(r, "") ≡ Pattern.compile(r).matcher(s).replaceAll("")；
+	// 两者的正则 flags 均为 0 ⇒ 逐位等价。
+	// ---------------------------------------------------------------------
+
+	/**
+	 * 连续空白（{@code \s+}）：删空白用。
+	 */
+	private static final Pattern WHITESPACE_RUN_PATTERN = Pattern.compile("\\s+");
+
+	/**
+	 * 非数字字符（{@code [^0-9]}）：提取纯数字用。
+	 */
+	private static final Pattern NON_DIGIT_PATTERN = Pattern.compile("[^0-9]");
+
+	/**
+	 * 纯拉丁字母与空白（{@code [A-Za-z\s]+}）：排除英文/噪声框用。
+	 */
+	private static final Pattern LATIN_ONLY_PATTERN = Pattern.compile("[A-Za-z\\s]+");
+
+	/**
+	 * 空白或"日"字（{@code [\s日]+}）：日期后缀清理用。
+	 */
+	private static final Pattern WHITESPACE_OR_DAY_PATTERN = Pattern.compile("[\\s日]+");
+
+	/**
+	 * 空白或全角空格（{@code [\s\u3000]+}）：全角空格清理用。
+	 */
+	private static final Pattern WHITESPACE_OR_IDEO_PATTERN = Pattern.compile("[\\s\\u3000]+");
+
+	/**
+	 * 以省/市/县结尾的地名（{@code .+[省市县]$}）。
+	 */
+	private static final Pattern ADDRESS_SUFFIX_PATTERN = Pattern.compile(".+[省市县]$");
+
+	/**
+	 * 纯 4 位数字（{@code ^\d{4}$}）：年份判定用。
+	 */
+	private static final Pattern YEAR_ONLY_PATTERN = Pattern.compile("^\\d{4}$");
+
+	/**
+	 * 以 1~2 位数字开头（{@code ^\d{1,2}.*}）：月日片段判定用。
+	 */
+	private static final Pattern YEAR_PREFIX_PATTERN = Pattern.compile("^\\d{1,2}.*");
+
+	/**
+	 * 含日期分隔符（{@code .*[-./].*}）：判断是否已是结构化日期用。
+	 */
+	private static final Pattern DATE_SEPARATOR_PATTERN = Pattern.compile(".*[-./].*");
+
+	/**
+	 * 标签后缀标点与空白（{@code [：:，,\s]+}）。
+	 */
+	private static final Pattern LABEL_PUNCT_PATTERN = Pattern.compile("[：:，,\\s]+");
+
 	/**
 	 * 与户主关系关键字。
 	 */
@@ -188,12 +247,12 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		}
 		String value = match.value();
 		if (value == null) {
-			LabelMatcher.applyFieldBox(r, name, match);
+			// 没有值 ⇒ 没有「该字段使用的框」，不登记 fieldBoxes。
+			// 否则可视化会高亮一个空字段；「标签在、值缺失」由 LabelMatchStatus 表达。
 			return;
 		}
 		String trimmed = value.trim();
 		if (trimmed.isEmpty()) {
-			LabelMatcher.applyFieldBox(r, name, match);
 			return;
 		}
 		switch (name) {
@@ -243,8 +302,10 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 				r.setRegistrationDate(trimmed);
 				break;
 			default: {
-				/* no-op */
-				break;
+				// 未知字段名（拼错 / 结果类新增了字段但忘了加 case）：
+				// 值取不到却登记了框，可视化会高亮一个空字段 —— 不登记并告警。
+				log.warn("户口本解析：未知字段名 \"{}\"，不回填 fieldBoxes", name);
+				return;
 			}
 		}
 		LabelMatcher.applyFieldBox(r, name, match);
@@ -284,7 +345,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			String text = r.text();
 			if (text == null || text.isEmpty()) continue;
 			// 整框文本去掉所有非数字字符
-			String digitsOnly = text.replaceAll("[^0-9]", "");
+			String digitsOnly = NON_DIGIT_PATTERN.matcher(text).replaceAll("");
 			if (digitsOnly.isEmpty()) continue;
 			// 整框就是 18 位身份证 → 跳过
 			if (ID_NUMBER_18_PATTERN.matcher(digitsOnly).matches()) continue;
@@ -293,7 +354,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			// 整框文本中不能含 18 位身份证片段（合并框 "310128198508253218身高"）
 			if (ID_NUMBER_18_PATTERN.matcher(text).find()) continue;
 			// 整框文本必须以纯数字为主（去掉非数字后剩余部分应与原文本去掉空白后相等）
-			String stripped = text.replaceAll("\\s+", "");
+			String stripped = WHITESPACE_RUN_PATTERN.matcher(text).replaceAll("");
 			if (!stripped.equals(digitsOnly)) continue;
 			int y = LabelMatcher.minY(r);
 			if (y < bestY) {
@@ -317,7 +378,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 	private static String cleanHouseholdNo(String raw) {
 		if (raw == null) return null;
 		// 去掉冒号、空格、中文括号等
-		String stripped = raw.replaceAll("[^0-9]", "");
+		String stripped = NON_DIGIT_PATTERN.matcher(raw).replaceAll("");
 		if (stripped.length() < 7 || stripped.length() > 12) {
 			return null;
 		}
@@ -417,7 +478,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 	private static LabeledMatch parseGender(List<PPOcrV6Result> results) {
 		LabeledMatch m = matchValueWithBoxWithSpaces(results, "性别");
 		if (m.hasValue()) {
-			String cleaned = m.value().replaceAll("\\s+", "");
+			String cleaned = WHITESPACE_RUN_PATTERN.matcher(m.value()).replaceAll("");
 			if (cleaned.contains("男") || cleaned.contains("女")) {
 				return LabeledMatch.of(cleaned.contains("男") ? "男" : "女", m.matches());
 			}
@@ -552,7 +613,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 				// y 与民族 label 行重叠
 				if (rYMax < yMin || rYMin > yMax) continue;
 				// 必须是省/市/县结尾的地名
-				if (!text.matches(".+[省市县]$")) continue;
+				if (!ADDRESS_SUFFIX_PATTERN.matcher(text).matches()) continue;
 				int score = Math.abs((rYMin + rYMax) / 2 - (yMin + yMax) / 2);
 				if (score < bestScore) {
 					bestScore = score;
@@ -747,7 +808,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		}
 		// 2) 兜底：扫所有框找日期（宽松正则）
 		LabeledMatch fb = LabelMatcher.matchSubstringWithBox(results, text -> {
-			String stripped = text.replaceAll("\\s+", "");
+			String stripped = WHITESPACE_RUN_PATTERN.matcher(text).replaceAll("");
 			if (ID_NUMBER_18_PATTERN.matcher(stripped).matches()) return null;
 			Matcher m = REG_DATE_LOOSE_PATTERN.matcher(text);
 			if (m.find()) {
@@ -799,7 +860,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 				// OCR 切日期时可能把"2019 / 年 / 11 / 月 / 11"交错切碎，
 				// 后续日期片会落在当前主框的 x 范围左侧（如"月"在"11"之后）。
 				if (dx < -30 || dx > 100) continue;
-				if (text.matches("[A-Za-z\\s]+")) continue;
+				if (LATIN_ONLY_PATTERN.matcher(text).matches()) continue;
 				int dy = Math.abs(rCY - mainCY);
 				int score = dx * 10 + dy;
 				if (score < nextScore) {
@@ -812,12 +873,12 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			if (nextText.length() > 6) break;
 			// 拼接：若主值是纯 4 位数字（年份），需在拼接时插入"年"分隔
 			String joined;
-			if (value.matches("^\\d{4}$") && nextText.matches("^\\d{1,2}.*")) {
+			if (YEAR_ONLY_PATTERN.matcher(value).matches() && YEAR_PREFIX_PATTERN.matcher(nextText).matches()) {
 				joined = value + "年" + nextText;
 			} else {
 				joined = value + nextText;
 			}
-			joined = joined.replaceAll("\\s+", "");
+			joined = WHITESPACE_RUN_PATTERN.matcher(joined).replaceAll("");
 			// 拼接后如果包含完整日期就停
 			if (DATE_PATTERN.matcher(joined).find()) {
 				boxes.add(next);
@@ -829,7 +890,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			value = joined;
 			mainMaxX = LabelMatcher.maxX(next);
 		}
-		String finalVal = value.replaceAll("\\s+", "");
+		String finalVal = WHITESPACE_RUN_PATTERN.matcher(value).replaceAll("");
 		// 自动补"日"：仅当日期含"日"前的数字（"yyyy年MM月dd"）但缺"日"字时补"日"
 		// 部分日期 "yyyy年MM月"（无日）则不补，保持原样（如 register3 的"2003年11月"）
 		// 用 REG_DATE_PARTIAL_PATTERN（不要求"日"前的数字）区分"完整日期无日" vs "部分日期"
@@ -878,7 +939,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 
 	private static String cleanIdNumber(String raw) {
 		if (raw == null) return null;
-		String stripped = raw.replaceAll("\\s+", "");
+		String stripped = WHITESPACE_RUN_PATTERN.matcher(raw).replaceAll("");
 		if (ID_NUMBER_18_PATTERN.matcher(stripped).matches()) {
 			return stripped;
 		}
@@ -1117,7 +1178,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			if (m.find()) {
 				String hit = m.group();
 				int endIdx = m.end();
-				String suffix = endIdx < text.length() ? text.substring(endIdx).replaceAll("\\s+", "") : "";
+				String suffix = endIdx < text.length() ? WHITESPACE_RUN_PATTERN.matcher(text.substring(endIdx)).replaceAll("") : "";
 				if (suffix.isEmpty()) {
 					int y = (LabelMatcher.minY(r) + LabelMatcher.maxY(r)) / 2;
 					if (y > bestFullY) {
@@ -1132,7 +1193,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			if (m.find()) {
 				String hit = m.group();
 				int endIdx = m.end();
-				String suffix = endIdx < text.length() ? text.substring(endIdx).replaceAll("[\\s日]+", "") : "";
+				String suffix = endIdx < text.length() ? WHITESPACE_OR_DAY_PATTERN.matcher(text.substring(endIdx)).replaceAll("") : "";
 				if (suffix.isEmpty()) {
 					int y = (LabelMatcher.minY(r) + LabelMatcher.maxY(r)) / 2;
 					if (y > bestPartialY) {
@@ -1153,7 +1214,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		} else if (bestPartial != null) {
 			best = bestPartial;
 			bestDate = bestPartialDate;
-			if (!bestDate.contains("月") && !bestDate.matches(".*[-./].*")) {
+			if (!bestDate.contains("月") && !DATE_SEPARATOR_PATTERN.matcher(bestDate).matches()) {
 				bestDate = bestDate + "月";
 			}
 		} else {
@@ -1213,7 +1274,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 		if (labelText.startsWith(label) && labelText.length() > label.length()) {
 			String afterLabel = labelText.substring(label.length());
 			// 容忍"label + 纯标点"形式（如"登记日期："），label 后只有标点 / 空白时仍当作 label 框
-			if (!afterLabel.matches("[：:，,\\s]+")) {
+			if (!LABEL_PUNCT_PATTERN.matcher(afterLabel).matches()) {
 				return LabeledMatch.textOnly(null);
 			}
 		}
@@ -1228,7 +1289,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			if (r == labelBox) continue;
 			String text = r.text();
 			if (text == null || text.isEmpty()) continue;
-			if (text.matches("[A-Za-z\\s]+")) continue;
+			if (LATIN_ONLY_PATTERN.matcher(text).matches()) continue;
 			if (!text.equals(label) && text.length() < label.length() && label.contains(text)) continue;
 			// 排除右列其他字段 label / label fragment（如"婚姻状况""兵役状况""职业""职"）
 			if (isLabelFragment(text)) continue;
@@ -1270,7 +1331,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 	 */
 	private static LabeledMatch matchValueToRightOfLabel(List<PPOcrV6Result> results, PPOcrV6Result labelBox, String selfLabel, boolean strictY, String... skipTexts) {
 		String labelText = labelBox.text();
-		if (labelText.startsWith(selfLabel.replaceAll("\\s+", "")) && labelText.length() > selfLabel.length()) {
+		if (labelText.startsWith(WHITESPACE_RUN_PATTERN.matcher(selfLabel).replaceAll("")) && labelText.length() > selfLabel.length()) {
 			return LabeledMatch.textOnly(null);
 		}
 		int labelMinY = LabelMatcher.minY(labelBox);
@@ -1283,7 +1344,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			if (r == labelBox) continue;
 			String text = r.text();
 			if (text == null || text.isEmpty()) continue;
-			if (text.matches("[A-Za-z\\s]+")) continue;
+			if (LATIN_ONLY_PATTERN.matcher(text).matches()) continue;
 			if (skipTexts != null) {
 				boolean skip = false;
 				for (String t : skipTexts) {
@@ -1410,7 +1471,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 
 	private static String trimAll(String text) {
 		if (text == null) return null;
-		return text.replaceAll("[\\s\u3000]+", "");
+		return WHITESPACE_OR_IDEO_PATTERN.matcher(text).replaceAll("");
 	}
 
 	@Override

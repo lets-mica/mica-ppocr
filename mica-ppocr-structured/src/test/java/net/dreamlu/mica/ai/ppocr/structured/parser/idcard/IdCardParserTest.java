@@ -513,4 +513,16 @@ class IdCardParserTest extends ParserTestSupport {
 		assertNull(r.getNation());
 		assertTrue(r.isNeedsReview());
 	}
+
+	@Test
+	void parse_front_fieldBoxes_populated() {
+		List<PPOcrV6Result> results = buildFrontOcr("000000199601110004", true);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertNotNull(r);
+		assertNotNull(r.getFieldBoxes().get("name"), "姓名应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("idNumber"), "身份证号应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("gender"), "性别应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("nation"), "民族应回填 fieldBoxes");
+		assertNotNull(r.getFieldBoxes().get("birthDate"), "出生日期应回填 fieldBoxes");
+	}
 }

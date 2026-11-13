@@ -175,7 +175,23 @@ public class LabelMatcher {
 	 * @return 字段值 + 值框；未匹配到时返回仅含 null value 的 LabeledMatch
 	 */
 	public static LabeledMatch matchValueByCenterWithBox(List<PPOcrV6Result> results, String label) {
-		LabelHit labelHit = findLabelHit(results, label);
+		return matchValueByCenterWithBox(results, label, findLabelHit(results, label));
+	}
+
+	/**
+	 * 按"标签右侧 + y 重叠 + 最左"策略取字段值 + 匹配框（复用已命中的标签）。
+	 *
+	 * <p>私有重载：供 {@link #matchValueFromPrefixWithBox} 复用同一次 {@link #findLabelHit} 结果，
+	 * 避免同一次取值把标签定位链跑两遍（{@code findLabelHit} 最坏要过 9 遍全表扫描：
+	 * 完整等于 → 片段拼接 → fragment 回退 → 逐个别名）。
+	 *
+	 * @param results  OCR 识别结果列表
+	 * @param label    字段标签
+	 * @param labelHit 已命中的标签信息；null 表示未命中
+	 * @return 字段值 + 值框；未匹配到时返回仅含 null value 的 LabeledMatch
+	 */
+	private static LabeledMatch matchValueByCenterWithBox(List<PPOcrV6Result> results, String label,
+														   LabelHit labelHit) {
 		if (labelHit == null) {
 			// 字段级探测未命中是**正常结果**而非异常，故用 debug：
 			// ① 版面本身可能没有该字段（如身份证反面无"姓名"、副页无"号牌号码"）；
@@ -246,11 +262,13 @@ public class LabelMatcher {
 	 * @return 字段值 + 值框；未匹配到时返回仅含 null value 的 LabeledMatch
 	 */
 	public static LabeledMatch matchValueFromPrefixWithBox(List<PPOcrV6Result> results, String label) {
-		LabeledMatch center = matchValueByCenterWithBox(results, label);
+		// 标签定位只做一次：原先这里先调 matchValueByCenterWithBox（其内部已 findLabelHit），
+		// 失败后又调一次 findLabelHit ⇒ 同一次取值把标签回退链跑了两遍。
+		LabelHit labelHit = findLabelHit(results, label);
+		LabeledMatch center = matchValueByCenterWithBox(results, label, labelHit);
 		if (center.hasValue()) {
 			return center;
 		}
-		LabelHit labelHit = findLabelHit(results, label);
 		if (labelHit == null) {
 			return center;
 		}
@@ -411,7 +429,7 @@ public class LabelMatcher {
 				score = first.score();
 			}
 		}
-		return new ParsedField(match.value(), source, score);
+		return new ParsedField(match.value(), source, score, boxesOf(match));
 	}
 
 	/**
@@ -427,7 +445,7 @@ public class LabelMatcher {
 	 */
 	public static ParsedField toParsedField(LabeledMatch match, FieldSource source, String value) {
 		ParsedField base = toParsedField(match, source);
-		return new ParsedField(value, base.source(), base.ocrScore());
+		return new ParsedField(value, base.source(), base.ocrScore(), base.boxes());
 	}
 
 	/**
@@ -438,8 +456,46 @@ public class LabelMatcher {
 	 * @param match     字段匹配结果（含值框列表）
 	 */
 	public static void applyFieldBox(BaseStructuredResult result, String fieldName, LabeledMatch match) {
-		if (result == null || fieldName == null || match == null || match.matches().isEmpty()) {
+		if (result == null || fieldName == null) {
 			return;
+		}
+		List<int[][]> boxes = boxesOf(match);
+		if (boxes != null && !boxes.isEmpty()) {
+			result.getFieldBoxes().put(fieldName, boxes);
+		}
+	}
+
+	/**
+	 * 辅助：把 {@link ParsedField} 携带的框回填到结构化结果的 fieldBoxes 中。
+	 *
+	 * <p>解析器用 {@link #toParsedField(LabeledMatch, FieldSource)} 把
+	 * {@link LabeledMatch} 转成 {@link ParsedField} 时，框坐标会一并带过来，
+	 * 这里直接登记即可 —— 无需解析器再调一次标签定位。
+	 *
+	 * @param result    结构化结果对象
+	 * @param fieldName 字段名（如 "name"）
+	 * @param field     字段解析结果（含值框列表）
+	 */
+	public static void applyFieldBox(BaseStructuredResult result, String fieldName, ParsedField field) {
+		if (result == null || fieldName == null || field == null) {
+			return;
+		}
+		List<int[][]> boxes = field.boxes();
+		if (boxes == null || boxes.isEmpty()) {
+			return;
+		}
+		result.getFieldBoxes().put(fieldName, boxes);
+	}
+
+	/**
+	 * 提取匹配结果中的 OCR 框坐标列表；没有可用框时返回 null。
+	 *
+	 * @param match 字段匹配结果
+	 * @return 框坐标列表；无框时为 null
+	 */
+	private static List<int[][]> boxesOf(LabeledMatch match) {
+		if (match == null || match.matches().isEmpty()) {
+			return null;
 		}
 		List<int[][]> boxes = new ArrayList<>(match.matches().size());
 		for (PPOcrV6Result r : match.matches()) {
@@ -447,9 +503,7 @@ public class LabelMatcher {
 				boxes.add(r.box());
 			}
 		}
-		if (!boxes.isEmpty()) {
-			result.getFieldBoxes().put(fieldName, boxes);
-		}
+		return boxes.isEmpty() ? null : boxes;
 	}
 
 	/**

@@ -316,12 +316,18 @@ public class TaxiReceiptParser extends BaseStructuredParser<TaxiReceiptResult> {
 					r.setCity(match.value());
 					break;
 				default: {
-					/* no-op */
-					break;
+					// 未知字段名（拼错 / 结果类新增了字段但忘了加 case）：
+					// 值取不到却登记了框，可视化会高亮一个空字段 —— 不登记并告警。
+					log.warn("出租车票解析：未知字段名 \"{}\"，不回填 fieldBoxes", name);
+					return;
 				}
 			}
+			// 值已确认非空且字段名有效 ⇒ 登记 fieldBoxes
+			LabelMatcher.applyFieldBox(r, name, match);
+			return;
 		}
-		LabelMatcher.applyFieldBox(r, name, match);
+		// 没有值 ⇒ 没有「该字段使用的框」，不登记 fieldBoxes
+		// （否则可视化会高亮一个空字段；「标签在、值缺失」由 LabelMatchStatus 表达）
 	}
 
 	private static LabeledMatch parseInvoiceCode(List<PPOcrV6Result> results) {

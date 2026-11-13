@@ -674,28 +674,23 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	}
 
 	/**
-	 * 有效期限：按 "有效期限" 标签定位；解析 "YYYY.MM.DD[-YYYY.MM.DD]" 格式。
+	 * 有效期限：按 "有效期限" 标签定位；原文格式为 "YYYY.MM.DD[-YYYY.MM.DD]"。
 	 *
-	 * @return [validFrom, validTo]，单段时两端相同；解析失败返回 null
+	 * <p>返回带框的匹配结果（而非裸字符串），以便把定位关系回填到
+	 * {@code fieldBoxes}（validFrom / validTo）。
+	 *
+	 * @return 有效期限的原始匹配结果；未匹配到时 value 为 null
 	 */
-	private static String[] parseValidTerm(List<PPOcrV6Result> results) {
-		String labelValue = LabelMatcher.matchValue(results, "有效期限");
-		if (labelValue == null) {
-			labelValue = LabelMatcher.matchPattern(results, VALID_TERM_PATTERN, false);
+	private static LabelMatcher.LabeledMatch parseValidTerm(List<PPOcrV6Result> results) {
+		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueWithBox(results, "有效期限");
+		if (!labelValue.hasValue()) {
+			labelValue = LabelMatcher.matchPatternWithBox(results, VALID_TERM_PATTERN, false);
 		}
-		if (labelValue == null) {
+		if (!labelValue.hasValue()) {
 			log.warn("身份证解析：未匹配到有效期限");
-			return null;
+			return LabelMatcher.LabeledMatch.textOnly(null);
 		}
-		// "长期"：两端都填 "长期"
-		if (labelValue.contains("长期")) {
-			return new String[]{"长期", "长期"};
-		}
-		String[] parts = labelValue.split("-");
-		if (parts.length == 1) {
-			return new String[]{parts[0], parts[0]};
-		}
-		return new String[]{parts[0], parts[1]};
+		return labelValue;
 	}
 
 	/**
@@ -740,26 +735,48 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			ParsedField address = parseAddressField(results);
 
 			r.setName(name.value());
+			LabelMatcher.applyFieldBox(r, "name", name);
 			r.setGender(gender.value());
+			LabelMatcher.applyFieldBox(r, "gender", gender);
 			r.setNation(nation.value());
+			LabelMatcher.applyFieldBox(r, "nation", nation);
 			r.setIdNumber(idNumber.value());
+			LabelMatcher.applyFieldBox(r, "idNumber", idNumber);
 			r.setBirthDate(birthDate.value());
+			LabelMatcher.applyFieldBox(r, "birthDate", birthDate);
 			r.setAddress(address.value());
+			// 住址是多行拼接出来的，没有"唯一一个框"，故不回填 fieldBoxes
+			// （与行驶证「所有人」的版面兜底同理）。
 
 			fillFrontConfidences(r, name, gender, nation, birthDate, address, idNumber);
 		} else if (side == IdCardSide.BACK) {
 			LabelMatcher.LabeledMatch authority = LabelMatcher.matchValueFromPrefixWithBox(results, "签发机关");
 			r.setIssuingAuthority(authority.value());
+			LabelMatcher.applyFieldBox(r, "issuingAuthority", authority);
 			r.setValidFrom(null);
 			r.setValidTo(null);
-			String[] term = parseValidTerm(results);
-			if (term != null) {
-				r.setValidFrom(term[0]);
-				r.setValidTo(term[1]);
+			LabelMatcher.LabeledMatch term = parseValidTerm(results);
+			if (term.hasValue()) {
+				String text = term.value();
+				String from;
+				String to;
+				if (text.contains("长期")) {
+					// "长期"：两端都填 "长期"
+					from = "长期";
+					to = "长期";
+				} else {
+					String[] parts = text.split("-");
+					from = parts[0];
+					to = parts.length > 1 ? parts[1] : parts[0];
+				}
+				r.setValidFrom(from);
+				r.setValidTo(to);
+				LabelMatcher.applyFieldBox(r, "validFrom", term);
+				LabelMatcher.applyFieldBox(r, "validTo", term);
 				r.putFieldConfidence(FieldConfidence.of("validFrom",
-					ParsedField.label(term[0], null), null));
+					ParsedField.label(from, null), null));
 				r.putFieldConfidence(FieldConfidence.of("validTo",
-					ParsedField.label(term[1], null), null));
+					ParsedField.label(to, null), null));
 			}
 			r.putFieldConfidence(FieldConfidence.of("issuingAuthority",
 				LabelMatcher.toParsedField(authority, FieldSource.LABEL), null));
