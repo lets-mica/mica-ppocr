@@ -686,7 +686,7 @@ public class BusinessLicenseParser extends BaseStructuredParser<BusinessLicenseR
 			log.debug("营业执照解析：经营范围按底部关键词兜底命中 \"{}\"", best.text());
 			return best.text();
 		}
-		log.warn("营业执照解析：未匹配到经营范围");
+		log.debug("营业执照解析：未匹配到经营范围（标签定位与内容兜底都没命中）");
 		return null;
 	}
 
@@ -980,7 +980,7 @@ public class BusinessLicenseParser extends BaseStructuredParser<BusinessLicenseR
 		// 统一社会信用代码校验不过 = 至少认错了一个字符，置信度直接归零并标记需复核。
 		ValidationResult creditValidation = Validations.validateCreditCode(creditMatch.value());
 		if (creditValidation.mismatched()) {
-			log.warn("营业执照解析：{}", creditValidation.message());
+			log.warn("营业执照解析：{}；建议：核对识别到的统一社会信用代码，必要时换更高档位模型重试", creditValidation.message());
 		}
 		license.putFieldConfidence(FieldConfidence.of("creditCode",
 			LabelMatcher.toParsedField(creditMatch, FieldSource.LABEL), creditValidation));

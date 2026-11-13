@@ -125,7 +125,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		if (hit.hasValue()) {
 			return LabelMatcher.toParsedField(hit, FieldSource.PATTERN);
 		}
-		log.warn("银行卡解析：未匹配到卡号");
+		log.debug("银行卡解析：未匹配到卡号（16~19 位数字正则与去分隔符后的连续数字都没命中；可换更高档位模型重试）");
 		return ParsedField.missing();
 	}
 
@@ -213,7 +213,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 			return LabelMatcher.toParsedField(hit, FieldSource.PATTERN,
 				hit.value().replace(".", ". ").replace("  ", " ").trim());
 		}
-		log.warn("银行卡解析：未匹配到持卡人");
+		log.debug("银行卡解析：未匹配到持卡人（中文姓名与英文姓名两条路径都没命中；可检查是否被当成机构名过滤掉了）");
 		return ParsedField.missing();
 	}
 
@@ -236,7 +236,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 			}
 		}
 		if (candidates.isEmpty()) {
-			log.warn("银行卡解析：未匹配到发卡行");
+			log.debug("银行卡解析：未匹配到发卡行（顶部中文 ≥4 字且含银行主体的候选框一个都没有）");
 			return ParsedField.missing();
 		}
 		// 按 minY 升序，取最顶部的
@@ -272,7 +272,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 				return LabelMatcher.toParsedField(LabelMatcher.LabeledMatch.of("CREDIT", r), FieldSource.PATTERN);
 			}
 		}
-		log.warn("银行卡解析：未匹配到卡片类型");
+		log.debug("银行卡解析：未匹配到卡片类型（CREDIT/DEBIT 与中文「信用卡/借记卡」都没命中）");
 		return ParsedField.missing();
 	}
 
@@ -300,7 +300,7 @@ public class BankCardParser extends BaseStructuredParser<BankCardResult> {
 		// 卡号 Luhn 不通过 = 至少认错了一个数字，置信度直接归零并标记需复核。
 		ValidationResult validation = Validations.validateBankCard(cardNumber.value());
 		if (validation.mismatched()) {
-			log.warn("银行卡解析：{}", validation.message());
+			log.warn("银行卡解析：{}；建议：核对识别到的卡号，必要时换更高档位模型重试", validation.message());
 		}
 		r.putFieldConfidence(FieldConfidence.of("cardNumber", cardNumber, validation));
 		r.putFieldConfidence(FieldConfidence.of("validDate", validDate, null));

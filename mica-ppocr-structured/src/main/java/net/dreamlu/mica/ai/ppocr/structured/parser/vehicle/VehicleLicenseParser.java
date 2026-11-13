@@ -362,13 +362,22 @@ public class VehicleLicenseParser extends BaseStructuredParser<VehicleLicenseRes
 				match = resolved;
 			} else if (containsChinese(match.value())) {
 				// 4) 兜底保留近正确的原值（如 "重型集装箱半技车"），交给词表纠错
-				log.warn("行驶证解析：车辆类型位置匹配 \"{}\" 格式异常且兜底未命中，保留原值待词表纠错", match.value());
+				// 注意：此时还不能告警 —— 词表纠错很可能把值救回来（"半技车" → "半挂车"），
+				// 告警放到纠错之后按最终值给（见 parseVehicleType 末尾）。
+				log.debug("行驶证解析：车辆类型位置匹配 \"{}\" 格式异常且兜底未命中，保留原值待词表纠错", match.value());
 			} else {
 				// 纯噪声（如 "："）或本就无值 → 置 null
+				log.debug("行驶证解析：车辆类型位置匹配值为纯噪声 \"{}\"，置 null", match.value());
 				match = LabeledMatch.textOnly(null);
 			}
 		}
-		return correctVehicleTypeByVocabulary(match);
+		LabeledMatch corrected = correctVehicleTypeByVocabulary(match);
+		if (corrected.hasValue() && !isVehicleTypeValue(corrected)) {
+			// 位置匹配格式异常、正则/子串兜底没命中、词表纠错也没救回来 ⇒ 最终值确定是错的
+			log.warn("行驶证解析：车辆类型最终未取到合法值 \"{}\"（位置匹配格式异常，正则与子串兜底、词表纠错均未命中）；"
+				+ "建议：核对票面车辆类型，或补一条车型词表映射 / 放宽车辆类型的匹配正则", corrected.value());
+		}
+		return corrected;
 	}
 
 	/**
@@ -619,7 +628,8 @@ public class VehicleLicenseParser extends BaseStructuredParser<VehicleLicenseRes
 		}
 		String normalized = value.replace('I', '1').replace('O', '0').replace('Q', '0');
 		if (!VIN_PATTERN_STRICT.matcher(normalized).matches()) {
-			log.warn("行驶证解析：VIN 严格校验失败 \"{}\" -> \"{}\"，丢弃", value, normalized);
+			log.warn("行驶证解析：VIN 严格校验失败 \"{}\" -> \"{}\"，丢弃；"
+				+ "建议：核对识别到的车架号，或在归一化时补上其它易混字符（如 S/5、B/8）", value, normalized);
 			return LabeledMatch.textOnly(null);
 		}
 		if (!normalized.equals(value)) {

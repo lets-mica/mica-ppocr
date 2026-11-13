@@ -16,13 +16,13 @@
 
 package net.dreamlu.mica.ai.ppocr.structured.parser.batch;
 
+import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.bankcard.BankCardResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.business.BusinessLicenseResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
-import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseTest;
 import net.dreamlu.mica.ai.ppocr.structured.parser.driver.DriverLicenseResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.household.HouseholdRegisterResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.idcard.IdCardResult;
@@ -43,12 +43,7 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Locale;
-import java.util.Set;
+import java.util.*;
 
 /**
  * 图片批量结构化识别入口。
@@ -80,6 +75,7 @@ import java.util.Set;
  * ...
  * </pre>
  */
+@Slf4j
 public final class BatchOcrMain {
 
 	// ========================================================================
@@ -201,7 +197,9 @@ public final class BatchOcrMain {
 
 			for (int i = 0; i < images.size(); i++) {
 				Path imagePath = images.get(i);
-				System.out.println("[" + (i + 1) + '/' + images.size() + "] " + imagePath.getFileName());
+				// 用 logger 打文件名（与解析器日志同一条流）：stdout / stderr 分开缓冲时
+				// 两路输出会错位，导致「这条告警是哪张图的」对不上
+				log.info("[{}/{}] {}", i + 1, images.size(), imagePath.getFileName());
 				if (i > 0) {
 					pw.println();
 				}

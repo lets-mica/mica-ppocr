@@ -20,7 +20,7 @@
 - perf(core): ONNX Runtime 输出张量改为零拷贝读取 —— **每次 OCR 的堆分配降 32%~40%、峰值存活堆降 26%~46%**，端到端耗时降 1%~2%。**识别文本与置信度逐位不变**，回归测试见 `PPOcrV6EngineTensorAccessTest`。
 - perf(core): 模型与 PDF 的加载通道改为不整份进堆 —— Java 堆上不再出现与模型等大的数组（medium 档 rec 模型约 73 MiB），扫描件 PDF 也不再整份驻留。**推理结果与 PDF 解析结果均逐位 / 逐字不变**。⚠️ 行为变更：jar 内的 `classpath:` 资源仍走字节版；PDFBox 会持有该文件的读句柄直到文档关闭 —— Windows 上处理期间该文件不能删除 / 改名。回归测试见 `ModelSessionLoadingTest` / `PdfEngineRunPdfIntegrationTest`。
 - perf(structured): 结构化解析层的正则全部预编译 + 标签定位不再重复扫描 —— 单次正则调用快 5.4×（matches）/ 2.1×（replaceAll），解析耗时降 ~22%、堆分配降 60%~68%。**解析结果逐字不变**。
-- perf(structured): `LabelMatcher` 的字段级探测日志由 `warn` 调成 `debug` —— 减少不必要的日志输出。
+- perf(structured): 解析日志的级别按「是否确定有误」重排 —— 10 个内置解析器的字段级未命中（"未匹配到户号"等）与 `LabelMatcher` 的「位置匹配格式异常，改走正则兜底」一律由 `warn` 调成 `debug`，并把**失败原因与处理建议写进消息本身**（形如「标签定位与数字正则兜底都没命中；该版面可能本就没有此字段，如户口本副页」），开 `debug` 即可定位。⚠️ 行为变更：校验位不符、版面完全认不出、结果类字段名未登记这类「确定有误」仍保留 `warn` 并补上可执行的修复建议；行驶证车辆类型改为**按最终值告警** —— 词表纠错能救回来的值不再告警，只有纠不回来才提示；批量识别工具把文件名与解析日志打进同一条流，避免 stdout / stderr 错位对不上是哪张图。
 - refactor(core): PDF 依赖改为可选 —— 只做图片 OCR 的项目不再被动背上 pdfbox + fontbox。⚠️ **行为变更**：需要处理 PDF 输入的项目要显式引入 `org.apache.pdfbox:pdfbox:3.0.8`；未引入时 `run(byte[])` 收到 PDF 输入抛 `IllegalStateException` 并指明要补的依赖。
 - refactor(core): 移除 JTS 依赖 —— 多边形偏移（unclip）改为纯 Java 实现，运行时不再有第三方几何库依赖，**unclip 单次调用 5.34 → 1.63 μs、每次堆分配 12.7 KB → 2.7 KB**。**检测框坐标与识别文本逐位不变**，回归测试见 `OffsetTest`。
 

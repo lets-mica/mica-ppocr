@@ -121,7 +121,7 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 		if (front) {
 			return IdCardSide.FRONT;
 		}
-		log.warn("身份证解析：未能识别版面（无正面/反面特征标签）");
+		log.warn("身份证解析：未能识别版面（无正面/反面特征标签；整张图可能不是身份证，或 OCR 质量过低）");
 		return IdCardSide.UNKNOWN;
 	}
 
@@ -423,8 +423,12 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 		PPOcrV6Result labelBox = LabelMatcher.findLabelBox(results, "住址");
 		if (labelBox == null) {
 			// 兜底：标签完全缺失（small 模型常见），按 score + 地址关键字过滤从所有框拼出地址
-			log.warn("身份证解析：未找到标签 \"住址\"，启用无标签兜底");
-			return parseAddressWithoutLabel(results);
+			log.debug("身份证解析：未找到标签「住址」，启用无标签兜底（small 模型常见；兜底也拼不出时该字段为空）");
+			String fallbackAddress = parseAddressWithoutLabel(results);
+			if (fallbackAddress == null || fallbackAddress.trim().isEmpty()) {
+				log.debug("身份证解析：无标签兜底也没拼出住址（按地址关键字与分数筛出的候选框都不符合）");
+			}
+			return fallbackAddress;
 		}
 
 		// 1. 定位"身份证号码"框（可能与 label 合并），用其区域作为住址的排除区
@@ -657,7 +661,7 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			log.debug("身份证解析：身份证号正则兜底命中 \"{}\"", fallback.value());
 			return LabelMatcher.toParsedField(fallback, FieldSource.PATTERN);
 		}
-		log.warn("身份证解析：未匹配到身份证号");
+		log.debug("身份证解析：未匹配到公民身份号码（标签定位与 18/15 位正则兜底都没命中；可换更高档位模型重试）");
 		return ParsedField.missing();
 	}
 
@@ -687,7 +691,7 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 			labelValue = LabelMatcher.matchPatternWithBox(results, VALID_TERM_PATTERN, false);
 		}
 		if (!labelValue.hasValue()) {
-			log.warn("身份证解析：未匹配到有效期限");
+			log.debug("身份证解析：未匹配到有效期限（标签定位与「YYYY.MM.DD[-YYYY.MM.DD]」正则兜底都没命中；仅反面需要此字段）");
 			return LabelMatcher.LabeledMatch.textOnly(null);
 		}
 		return labelValue;
@@ -804,7 +808,7 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 											ParsedField address, ParsedField idNumber) {
 		ValidationResult idValidation = Validations.validateIdCard(idNumber.value());
 		if (idValidation.mismatched()) {
-			log.warn("身份证解析：{}", idValidation.message());
+			log.warn("身份证解析：{}；建议：核对识别到的号码末位，必要时换更高档位模型重试", idValidation.message());
 		}
 		r.putFieldConfidence(FieldConfidence.of("idNumber", idNumber, idValidation));
 		r.putFieldConfidence(FieldConfidence.of("name", name, null));

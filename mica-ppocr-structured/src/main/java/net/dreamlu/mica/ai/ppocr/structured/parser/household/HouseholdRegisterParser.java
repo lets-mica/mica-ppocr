@@ -367,7 +367,10 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：户号 正则兜底命中 \"{}\"", bestVal);
 			return LabeledMatch.of(bestVal, best);
 		}
-		log.warn("户口本解析：未匹配到户号");
+		// 本文件所有「字段级未命中」一律 debug：日志量与失败率无关
+		// （户口本副页本就没有户号/迁入迁出等字段），每张图固定产出 N 条 warn 纯属噪音；
+		// 失败原因与处理建议写进消息本身，开 debug 即可看到。
+		log.debug("户口本解析：未匹配到户号（标签定位与数字正则兜底都没命中；该版面可能本就没有此字段，如户口本副页）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -547,7 +550,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：与户主关系 关系词位置兜底命中 \"{}\"", best.text());
 			return LabeledMatch.of(trimAll(best.text()), best);
 		}
-		log.warn("户口本解析：未匹配到与户主关系");
+		log.debug("户口本解析：未匹配到与户主关系（标签定位与关系词位置兜底都没命中；该页可能本就没有此字段）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -822,7 +825,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：出生日期 正则兜底命中 \"{}\"", fb.value());
 			return fb;
 		}
-		log.warn("户口本解析：未匹配到出生日期");
+		log.debug("户口本解析：未匹配到出生日期（标签定位与日期正则兜底都没命中；可检查是否被识别成「出生年月日」这类写法）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -929,7 +932,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：身份证号 正则兜底命中 \"{}\"", fb.value());
 			return fb;
 		}
-		log.warn("户口本解析：未匹配到公民身份号码");
+		log.debug("户口本解析：未匹配到公民身份号码（标签定位与 18 位正则兜底都没命中；可换更高档位模型，或把 OCR 认错的标签写法补进 LabelAliases）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -993,7 +996,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			}
 			log.debug("户口本解析：服务处所 位置匹配 \"{}\" 是 label fragment，拒绝", cleaned);
 		}
-		log.warn("户口本解析：未匹配到服务处所");
+		log.debug("户口本解析：未匹配到服务处所（标签定位与位置匹配都没命中；该页可能本就没有此字段）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -1045,7 +1048,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：何时由何地迁来本市(县) 值模式兜底命中 \"{}\"", cleaned);
 			return LabeledMatch.of(cleaned, best);
 		}
-		log.warn("户口本解析：未匹配到何时由何地迁来本市(县)");
+		log.debug("户口本解析：未匹配到何时由何地迁来本市(县)（标签定位与值模式兜底都没命中；该页可能本就没有此字段）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -1121,7 +1124,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 			log.debug("户口本解析：何时由何地迁往本址 值模式兜底命中 \"{}\"", cleaned);
 			return LabeledMatch.of(cleaned, best);
 		}
-		log.warn("户口本解析：未匹配到何时由何地迁往本址");
+		log.debug("户口本解析：未匹配到何时由何地迁往本址（标签定位与值模式兜底都没命中；该页可能本就没有此字段）");
 		return LabeledMatch.textOnly(null);
 	}
 
@@ -1218,7 +1221,7 @@ public class HouseholdRegisterParser extends BaseStructuredParser<HouseholdRegis
 				bestDate = bestDate + "月";
 			}
 		} else {
-			log.warn("户口本解析：未匹配到登记日期");
+			log.debug("户口本解析：未匹配到登记日期（标签定位与底部日期正则兜底都没命中；可检查是否被识别成「登记时间」）");
 			return LabeledMatch.textOnly(null);
 		}
 		log.debug("户口本解析：登记日期 底部正则兜底命中 \"{}\"", bestDate);

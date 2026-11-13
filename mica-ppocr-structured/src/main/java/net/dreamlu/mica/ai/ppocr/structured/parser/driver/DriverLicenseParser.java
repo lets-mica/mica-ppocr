@@ -287,7 +287,7 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 			}
 		}
 		// 3) 大陆驾照国籍基本恒为"中国"，作为最终兜底
-		log.warn("驾驶证解析：未找到国籍值，兜底填充 \"中国\"");
+		log.debug("驾驶证解析：未找到国籍值，兜底填充「中国」（标签定位与含「中国」的文本框都没命中）");
 		return "中国";
 	}
 
@@ -333,13 +333,13 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 					}
 				}
 				if (bestAlt != null) {
-					log.warn("驾驶证解析：未找到 \"住址\" 标签，使用近似标签 \"{}\" 作为住址定位基准", bestAlt.text());
+					log.debug("驾驶证解析：未找到「住址」标签，使用近似标签 \"{}\" 作为住址定位基准", bestAlt.text());
 					labelBox = bestAlt;
 				}
 			}
 		}
 		if (labelBox == null) {
-			log.warn("驾驶证解析：未找到标签 \"住址\"");
+			log.debug("驾驶证解析：未找到标签「住址」，也没找到近似标签（该字段为空）");
 			return null;
 		}
 		int labelCenterX = (LabelMatcher.minX(labelBox) + LabelMatcher.maxX(labelBox)) / 2;
@@ -552,7 +552,7 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 			candidates.add(r);
 		}
 		if (candidates.isEmpty()) {
-			log.warn("驾驶证解析：未匹配到签发机关");
+			log.debug("驾驶证解析：未匹配到签发机关（左下角位置的候选框一个都没有）");
 			return null;
 		}
 		// 多行签发机关按 y 升序拼接（去空格）
@@ -577,7 +577,7 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 			labelValue = LabelMatcher.matchPattern(results, VALID_PERIOD_PATTERN, false);
 		}
 		if (labelValue == null) {
-			log.warn("驾驶证解析：未匹配到有效期限");
+			log.debug("驾驶证解析：未匹配到有效期限（标签定位与「yyyy-MM-dd 至 yyyy-MM-dd」正则兜底都没命中）");
 			return null;
 		}
 		String[] parts = VALID_PERIOD_SPLIT_PATTERN.split(labelValue);
@@ -651,7 +651,7 @@ public class DriverLicenseParser extends BaseStructuredParser<DriverLicenseResul
 		// 驾驶证证号即公民身份号码，校验不过 = 至少认错了一个字符。
 		ValidationResult licenseValidation = Validations.validateIdCard(licenseNumber.value());
 		if (licenseValidation.mismatched()) {
-			log.warn("驾驶证解析：{}", licenseValidation.message());
+			log.warn("驾驶证解析：{}；建议：核对识别到的证号，必要时换更高档位模型重试", licenseValidation.message());
 		}
 		r.putFieldConfidence(FieldConfidence.of("licenseNumber", licenseNumber, licenseValidation));
 		r.putFieldConfidence(FieldConfidence.of("name", name, null));

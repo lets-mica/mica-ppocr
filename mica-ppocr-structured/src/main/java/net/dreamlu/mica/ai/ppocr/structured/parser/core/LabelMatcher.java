@@ -400,7 +400,9 @@ public class LabelMatcher {
 			if (pattern.matcher(labelMatch.value()).matches()) {
 				return labelMatch;
 			}
-			log.warn("结构化解析：{} 位置匹配 \"{}\" 格式异常，改走正则兜底", fieldName, labelMatch.value());
+			// 与上面「未找到标签」同理：这是字段级的中间状态，正则兜底通常能救回来，
+			// 日志量与失败率无关 ⇒ 降到 debug；真正"没救回来"由各解析器按最终值告警。
+			log.debug("结构化解析：{} 位置匹配 \"{}\" 格式异常，改走正则兜底", fieldName, labelMatch.value());
 		}
 		LabeledMatch fallback = matchPatternWithBox(results, pattern, last);
 		if (fallback.hasValue()) {

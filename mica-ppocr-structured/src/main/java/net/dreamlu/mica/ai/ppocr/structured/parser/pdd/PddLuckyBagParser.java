@@ -326,7 +326,8 @@ public class PddLuckyBagParser extends BaseStructuredParser<PddLuckyBagResult> {
 		if (lucky.score() > fruit.score()) {
 			return new TypeMatch(PddLuckyBagType.LUCKY_BAG, lucky.box());
 		}
-		log.warn("拼多多福袋解析：未能判定福袋类型（水果分 {} / 福袋分 {}）", fruit.score(), lucky.score());
+		log.warn("拼多多福袋解析：未能判定福袋类型（水果分 {} / 福袋分 {}；两类决定性文案都没出现，"
+			+ "可确认该图是否为福袋分享图，或换更高档位模型重试）", fruit.score(), lucky.score());
 		return new TypeMatch(PddLuckyBagType.UNKNOWN, null);
 	}
 
@@ -449,7 +450,7 @@ public class PddLuckyBagParser extends BaseStructuredParser<PddLuckyBagResult> {
 			r.setLuckyBagCode(match.value());
 			LabelMatcher.applyFieldBox(r, "luckyBagCode", match);
 		} else {
-			log.warn("拼多多福袋解析：未匹配到福袋码");
+			log.debug("拼多多福袋解析：未匹配到福袋码（标签定位与形态兜底都没命中；可检查是否被识别成了其它数字串）");
 		}
 		return r;
 	}
