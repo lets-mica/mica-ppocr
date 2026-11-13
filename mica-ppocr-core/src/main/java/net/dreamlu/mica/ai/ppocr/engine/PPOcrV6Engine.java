@@ -47,7 +47,6 @@ import org.opencv.core.Scalar;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
-import java.awt.image.BufferedImage;
 import java.io.*;
 import java.nio.FloatBuffer;
 import java.nio.file.FileSystems;

@@ -72,7 +72,7 @@ public class PPOCRAutoConfiguration {
 		requireNonBlank(properties.getDetModelPath(), "mica.ai.ppocr.det-model-path");
 		requireNonBlank(properties.getRecModelPath(), "mica.ai.ppocr.rec-model-path");
 		requireNonBlank(properties.getRecCharDictPath(), "mica.ai.ppocr.rec-char-dict-path");
-		PdfOcrConfig pdfOcrConfig = pdfOcrConfigs.getIfAvailable(() -> properties.getPdfOcrConfig());
+		PdfOcrConfig pdfOcrConfig = pdfOcrConfigs.getIfAvailable(properties::getPdfOcrConfig);
 		PPOcrV6Config.PPOcrV6ConfigBuilder builder = PPOcrV6Config.from(properties).toBuilder()
 			.pdfOcrConfig(pdfOcrConfig);
 		// 容器顺序应用 customizer（依赖 @Order / Ordered 即可控）

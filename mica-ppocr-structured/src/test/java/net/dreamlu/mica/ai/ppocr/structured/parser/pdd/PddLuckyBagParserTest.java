@@ -23,8 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * 拼多多福袋解析器单元测试。
@@ -115,7 +114,7 @@ class PddLuckyBagParserTest extends ParserTestSupport {
 	void parse_emptyResults() {
 		PddLuckyBagResult r = parse(new PddLuckyBagParser(null), CollUtil.listOf());
 		assertNotNull(r);
-		assertEquals(null, r.getLuckyBagCode());
+		assertNull(r.getLuckyBagCode());
 		assertEquals(PddLuckyBagType.UNKNOWN, r.getType());
 	}
 
