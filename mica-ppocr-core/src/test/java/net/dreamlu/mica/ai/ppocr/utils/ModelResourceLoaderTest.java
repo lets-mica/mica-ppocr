@@ -41,6 +41,41 @@ class ModelResourceLoaderTest {
 	}
 
 	@Test
+	void resolveFilePath_existingFile_returnsAbsolutePath() throws IOException {
+		Path temp = Files.createTempFile("model-resolver", ".onnx");
+		try {
+			Path resolved = ModelResourceLoader.resolveFilePath(temp.toString());
+			assertTrue(resolved.isAbsolute(), "返回的路径必须是绝对路径");
+			assertTrue(Files.isRegularFile(resolved));
+		} finally {
+			Files.deleteIfExists(temp);
+		}
+	}
+
+	@Test
+	void resolveFilePath_notFound_throwsWithFileNotFoundMessage() {
+		IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+			() -> ModelResourceLoader.resolveFilePath("/non/existent/path/model.onnx"));
+		assertTrue(ex.getMessage().contains("file not found"),
+			"报错消息应保持与 load() 一致的口径，实际：" + ex.getMessage());
+	}
+
+	@Test
+	void resolveFilePath_classpathResource_throws() {
+		// classpath 资源在 jar 内，没有文件系统路径 —— 不能交给 ORT 的路径版 API
+		IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+			() -> ModelResourceLoader.resolveFilePath("classpath:models/det.onnx"));
+		assertTrue(ex.getMessage().contains("classpath"),
+			"报错消息应指明是 classpath 资源，实际：" + ex.getMessage());
+	}
+
+	@Test
+	void resolveFilePath_nullOrEmpty_throws() {
+		assertThrows(IllegalArgumentException.class, () -> ModelResourceLoader.resolveFilePath(null));
+		assertThrows(IllegalArgumentException.class, () -> ModelResourceLoader.resolveFilePath(""));
+	}
+
+	@Test
 	void load_classpathResource_returnsBytes() {
 		// resources/test-utils/loader-test.txt 在 classpath 中准备
 		byte[] bytes = ModelResourceLoader.load("classpath:test-utils/loader-test.txt");

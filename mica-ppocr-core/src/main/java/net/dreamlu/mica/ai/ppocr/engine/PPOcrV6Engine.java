@@ -323,10 +323,10 @@ public final class PPOcrV6Engine implements Closeable {
 			// 避免 arena 高水位持续抬升导致 Docker OOM，吞吐损失约 10%。
 			OrtProviders.apply(opts, config);
 			try {
-				detSess = env.createSession(ModelResourceLoader.load(config.getDetModelPath()), opts);
-				recSess = env.createSession(ModelResourceLoader.load(config.getRecModelPath()), opts);
+				detSess = createModelSession(env, opts, config.getDetModelPath());
+				recSess = createModelSession(env, opts, config.getRecModelPath());
 				if (docOriEnabled) {
-					docOriSess = env.createSession(ModelResourceLoader.load(config.getDocOrientationModelPath()), opts);
+					docOriSess = createModelSession(env, opts, config.getDocOrientationModelPath());
 				}
 			} catch (OrtException e) {
 				silentClose(detSess);
@@ -373,6 +373,33 @@ public final class PPOcrV6Engine implements Closeable {
 		// 消除「容器刚起来时第一个请求显著慢于后续」。
 		// 失败只记 WARN，不影响引擎可用性（模型 / native / session 已在上面校验过）。
 		warmUp();
+	}
+
+	/**
+	 * 创建模型会话。
+	 *
+	 * <p><b>文件系统路径走 ORT 的路径版 API</b>（{@code createSession(String, SessionOptions)}）：
+	 * 模型字节由 ORT 自己从文件读进 native，<b>Java 堆上不再出现与模型等大的 byte[]</b>
+	 * （medium 档 rec 模型约 73 MiB，此前是启动期最大的一块瞬时堆）。
+	 *
+	 * <p><b>classpath 资源（jar 内）给不了路径</b> —— 只能退回字节版
+	 * {@code createSession(byte[], SessionOptions)}。
+	 *
+	 * <p>两条通道加载的是同一份模型字节、同一套 {@link OrtSession.SessionOptions}，
+	 * 推理结果逐位一致（回归测试见 {@code ModelSessionLoadingTest}）。
+	 *
+	 * @param env       ORT 环境
+	 * @param opts      会话选项
+	 * @param modelPath 模型路径（{@code classpath:} 前缀或文件系统路径）
+	 * @return 已创建的会话
+	 * @throws OrtException ORT 创建会话失败
+	 */
+	private static OrtSession createModelSession(OrtEnvironment env, OrtSession.SessionOptions opts,
+												  String modelPath) throws OrtException {
+		if (ModelResourceLoader.isClasspath(modelPath)) {
+			return env.createSession(ModelResourceLoader.load(modelPath), opts);
+		}
+		return env.createSession(ModelResourceLoader.resolveFilePath(modelPath).toString(), opts);
 	}
 
 	/**
@@ -775,6 +802,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
 	 *
+	 * <p>⚠️ PDF 走<b>文件路径</b>加载（PDFBox 按需读盘，整份 PDF 不进堆）——
+	 * 处理期间该文件会被 PDFBox 持有读句柄，Windows 上不能删除 / 改名。
+	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 路径为空、文件不存在或解码失败
@@ -812,6 +842,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
 	 *
+	 * <p>⚠️ PDF 走<b>文件路径</b>加载（PDFBox 按需读盘，整份 PDF 不进堆）——
+	 * 处理期间该文件会被 PDFBox 持有读句柄，Windows 上不能删除 / 改名。
+	 *
 	 * @param imageFile 图片或 PDF 文件
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 文件不存在或解码失败
@@ -829,6 +862,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * <p>⚠️ PDF 走<b>文件路径</b>加载（PDFBox 按需读盘，整份 PDF 不进堆）——
+	 * 处理期间该文件会被 PDFBox 持有读句柄，Windows 上不能删除 / 改名。
 	 *
 	 * @param imageFile 图片或 PDF 文件
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
@@ -849,6 +885,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
 	 *
+	 * <p>⚠️ PDF 走<b>文件路径</b>加载（PDFBox 按需读盘，整份 PDF 不进堆）——
+	 * 处理期间该文件会被 PDFBox 持有读句柄，Windows 上不能删除 / 改名。
+	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @return 识别结果列表（按阅读顺序排列）
 	 * @throws IllegalArgumentException 路径为 null、文件不存在或解码失败
@@ -864,6 +903,9 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <p>内部自动加载为 BGR Mat 并在方法返回时 release，调用方无需管理 native 内存。
 	 *
 	 * <p>如果文件内容以 {@code %PDF-} 魔数开头，自动按 PDF 双通道处理并平铺所有页结果。
+	 *
+	 * <p>⚠️ PDF 走<b>文件路径</b>加载（PDFBox 按需读盘，整份 PDF 不进堆）——
+	 * 处理期间该文件会被 PDFBox 持有读句柄，Windows 上不能删除 / 改名。
 	 *
 	 * @param imagePath 图片或 PDF 路径
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
@@ -888,13 +930,9 @@ public final class PPOcrV6Engine implements Closeable {
 					head = null;
 				}
 				if (PdfMagicDetector.isPdf(head)) {
-					byte[] pdfBytes;
-					try {
-						pdfBytes = Files.readAllBytes(imagePath);
-					} catch (IOException e) {
-						throw new UncheckedIOException(e);
-					}
-					return runPdfBytes(pdfBytes, detParams);
+					// 走文件路径：PDFBox 按需从磁盘随机读，整份 PDF 不进 JVM 堆
+					// （此前是 Files.readAllBytes 整份读入后交给 PDFBox，扫描件 PDF 动辄几十 MB）
+					return runPdfFile(imagePath.toFile(), detParams);
 				}
 			}
 			Mat mat = loadMat(imagePath);
@@ -1656,6 +1694,32 @@ public final class PPOcrV6Engine implements Closeable {
 	}
 
 	/**
+	 * PDF 双通道（<b>文件路径版</b>）：走 PDFBox 的文件版加载，整份 PDF 不进 JVM 堆。
+	 *
+	 * <p>与图片通道的口径一致 —— 图片走 {@code Imgcodecs.imread(path)}（native 读盘），
+	 * PDF 此前却是「整份读成 byte[] 再交给 PDFBox」，是两条链路里唯一还在堆上中转的。
+	 *
+	 * <p>⚠️ <b>行为变更</b>：PDFBox 会持有该文件的读句柄直到文档关闭 ——
+	 * Windows 上处理期间该文件不能被删除 / 改名。
+	 *
+	 * @param pdfFile   PDF 文件
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @return 平铺后的多页结果
+	 * @throws IllegalStateException PDFBox 依赖缺失
+	 */
+	private List<PPOcrV6Result> runPdfFile(File pdfFile, DbDetParams detParams) {
+		if (!PdfDependency.isAvailable()) {
+			throw new IllegalStateException(PdfDependency.MISSING_MESSAGE);
+		}
+		try {
+			List<PdfPageResult> pages = PdfRuntimeHolder.run(pdfFile, pdfOcrConfig, detParams, this::runMat);
+			return flattenPdfPages(pages);
+		} catch (IOException e) {
+			throw new UncheckedIOException(e);
+		}
+	}
+
+	/**
 	 * 将 PDF 多页结果平铺为单层 {@link PPOcrV6Result} 列表（按页顺序拼接）。
 	 *
 	 * @param pages 按页结果列表（不可为 null）
@@ -1699,6 +1763,24 @@ public final class PPOcrV6Engine implements Closeable {
 		static List<PdfPageResult> run(byte[] pdfBytes, PdfOcrConfig config, DbDetParams detParams,
 									   PdfOcrBridge bridge) throws IOException {
 			return INSTANCE.run(pdfBytes, config, detParams, bridge);
+		}
+
+		/**
+		 * 执行 PDF 双通道解析（文件路径版）。
+		 *
+		 * <p>参数与返回值里只有 JDK 类型（{@link File}）—— 本类与引擎的常量池里
+		 * 依旧不出现任何 PDFBox 类型，类加载隔离不受影响。
+		 *
+		 * @param pdfFile   PDF 文件
+		 * @param config    PDF 配置
+		 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+		 * @param bridge    渲染通道的 OCR 回调
+		 * @return per-page 结果列表
+		 * @throws IOException PDF 解析或渲染失败
+		 */
+		static List<PdfPageResult> run(File pdfFile, PdfOcrConfig config, DbDetParams detParams,
+									   PdfOcrBridge bridge) throws IOException {
+			return INSTANCE.run(pdfFile, config, detParams, bridge);
 		}
 	}
 }

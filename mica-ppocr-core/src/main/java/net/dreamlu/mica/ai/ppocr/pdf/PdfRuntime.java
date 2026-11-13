@@ -28,6 +28,7 @@ import org.apache.pdfbox.rendering.PDFRenderer;
 import org.opencv.core.Mat;
 
 import java.awt.image.BufferedImage;
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
@@ -86,6 +87,39 @@ public class PdfRuntime {
 			throw new IllegalArgumentException("bridge must not be null");
 		}
 		try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+			return runPages(doc, config, detParams, bridge);
+		}
+	}
+
+	/**
+	 * PDF 双通道解析（核心入口，<b>文件路径版</b>）。
+	 *
+	 * <p>走 {@link Loader#loadPDF(java.io.File)}：PDFBox 按需从磁盘随机读，
+	 * <b>整份 PDF 不进 JVM 堆</b> —— 字节版（{@code Loader.loadPDF(byte[])}）会把整个 PDF
+	 * 作为随机访问缓冲常驻堆直到文档关闭，扫描件 PDF 动辄几十 MB。
+	 *
+	 * <p>⚠️ <b>行为变更</b>：PDFBox 会持有该文件的读句柄直到 {@link PDDocument} 关闭 ——
+	 * Windows 上处理期间该文件不能被删除 / 改名。
+	 *
+	 * @param pdfFile   PDF 文件（不可为 null，且必须是已存在的常规文件）
+	 * @param config    PDF 配置（不可为 null）
+	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
+	 * @param bridge    渲染通道的 OCR 回调（不可为 null）
+	 * @return per-page 结果列表
+	 * @throws IOException PDF 解析或渲染失败
+	 */
+	public List<PdfPageResult> run(File pdfFile, PdfOcrConfig config, DbDetParams detParams,
+									PdfOcrBridge bridge) throws IOException {
+		if (config == null) {
+			throw new IllegalArgumentException("config must not be null");
+		}
+		if (pdfFile == null || !pdfFile.isFile()) {
+			throw new IllegalArgumentException("pdfFile must be an existing file");
+		}
+		if (bridge == null) {
+			throw new IllegalArgumentException("bridge must not be null");
+		}
+		try (PDDocument doc = Loader.loadPDF(pdfFile)) {
 			return runPages(doc, config, detParams, bridge);
 		}
 	}

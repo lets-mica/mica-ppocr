@@ -30,6 +30,7 @@ import java.util.List;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.electronicInvoiceStylePdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.imageOnlyPdf;
 import static net.dreamlu.mica.ai.ppocr.pdf.TestPdfFactory.multiPageTextPdf;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -112,6 +113,76 @@ class PdfEngineRunPdfIntegrationTest {
 
 			assertFalse(flat.isEmpty(), "PDF 多页 run(byte[]) 应平铺至少一页结果");
 		}
+	}
+
+	/**
+	 * 文件路径入参与字节入参的结果必须完全一致。
+	 *
+	 * <p>背景：PDF 通道改走 PDFBox 的文件版加载（{@code Loader.loadPDF(File)}），
+	 * 整份 PDF 不再进 JVM 堆；字节版 {@code Loader.loadPDF(byte[])} 保留给
+	 * {@code run(byte[])} 入口。两条通道解析的是同一份 PDF，输出必须逐字相同。
+	 */
+	@Test
+	void filePathInput_producesSameResultsAsByteInput() throws Exception {
+		Path root = findRepositoryRoot();
+		Path modelDir = root.resolve("models/ppocr-v6/" + DEFAULT_TIER);
+		Assumptions.assumeTrue(Files.isRegularFile(modelDir.resolve("det.onnx"))
+				&& Files.isRegularFile(modelDir.resolve("rec.onnx"))
+				&& Files.isRegularFile(modelDir.resolve("dict.txt")),
+			"tiny 模型缺失，跳过集成测试");
+
+		// 文本层通道（快）与渲染通道（重）各比一次 —— 两条通道的取数方式不同
+		assertSameResultsViaFileAndBytes(electronicInvoiceStylePdf(), modelDir);
+		assertSameResultsViaFileAndBytes(imageOnlyPdf(), modelDir);
+	}
+
+	/**
+	 * 同一份 PDF 字节：分别经「文件路径」与「字节」两条入口，结果必须逐字一致。
+	 *
+	 * @param pdfBytes  PDF 字节
+	 * @param modelDir  模型目录
+	 * @throws Exception 读写失败
+	 */
+	private static void assertSameResultsViaFileAndBytes(byte[] pdfBytes, Path modelDir) throws Exception {
+		Path tmp = Files.createTempFile("ppocr-pdf-ab-", ".pdf");
+		try {
+			Files.write(tmp, pdfBytes);
+			try (PPOcrV6Engine engine = newEngine(modelDir)) {
+				List<PPOcrV6Result> viaBytes = engine.run(pdfBytes);
+				List<PPOcrV6Result> viaFile = engine.run(tmp);
+				assertEquals(describe(viaBytes), describe(viaFile),
+					"PDF 文件通道与字节通道的结果必须完全一致");
+			}
+		} finally {
+			Files.deleteIfExists(tmp);
+		}
+	}
+
+	/**
+	 * 把结果摊成可比较的字符串列表（文本 + 置信度 + 框坐标）。
+	 *
+	 * @param results 结果列表
+	 * @return 可比较的描述列表
+	 */
+	private static List<String> describe(List<PPOcrV6Result> results) {
+		return CollUtil.toList(results.stream().map(r -> r.text() + "|" + r.score() + "|" + describeBox(r.box())));
+	}
+
+	/**
+	 * 框坐标摊平成字符串（{@code int[][]} 的 equals 是引用比较，不能直接比）。
+	 *
+	 * @param box 框坐标
+	 * @return 坐标描述
+	 */
+	private static String describeBox(int[][] box) {
+		if (box == null) {
+			return "null";
+		}
+		StringBuilder sb = new StringBuilder();
+		for (int[] point : box) {
+			sb.append(point[0]).append(',').append(point[1]).append(';');
+		}
+		return sb.toString();
 	}
 
 	private static PPOcrV6Engine newEngine(Path modelDir) {

@@ -79,6 +79,38 @@ public class ModelResourceLoader {
 	}
 
 	/**
+	 * 把「文件系统路径」形式的资源路径解析为<b>绝对路径</b>。
+	 *
+	 * <p>供 ONNX Runtime 的<b>路径版</b>会话 API
+	 * （{@code OrtEnvironment#createSession(String, SessionOptions)}）使用：
+	 * 模型字节由 ORT 自己从文件读进 native，<b>Java 堆上不再出现与模型等大的 byte[]</b>
+	 * （medium 档 rec 模型约 73 MiB，此前是启动期最大的一块瞬时堆）。
+	 *
+	 * <p>与 {@link #load(String)} 的分工：
+	 * <ul>
+	 *   <li>{@link #load(String)} 返回字节 —— jar 内资源（{@code classpath:} 前缀）只能用这条；</li>
+	 *   <li>{@link #resolveFilePath(String)} 只处理真实文件系统路径，jar 内资源直接抛异常。</li>
+	 * </ul>
+	 *
+	 * @param path 资源路径（非 {@code classpath:} 前缀）
+	 * @return 绝对路径
+	 * @throws IllegalArgumentException 路径为空、是 classpath 资源或文件不存在
+	 */
+	public static Path resolveFilePath(String path) {
+		if (path == null || path.isEmpty()) {
+			throw new IllegalArgumentException("model path must not be empty");
+		}
+		if (isClasspath(path)) {
+			throw new IllegalArgumentException("classpath resource has no filesystem path: " + path);
+		}
+		Path p = CollUtil.pathOf(path);
+		if (!Files.isRegularFile(p)) {
+			throw new IllegalArgumentException("file not found: " + path);
+		}
+		return p.toAbsolutePath();
+	}
+
+	/**
 	 * 从 classpath 读取资源为字节数组。
 	 *
 	 * <p>用 ModelResourceLoader 自身的 ClassLoader（根加载器）解析资源，

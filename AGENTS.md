@@ -935,6 +935,27 @@ Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
 **但堆分配降 32%~40%、峰值存活堆降 26%~46%** —— 这项优化的价值主要在**内存与 GC 压力**，不在速度。
 并发场景下每个在途请求各省 75~120 MB 分配量。
 
+**「整份数据不要在堆上留副本」—— 模型与 PDF 的加载通道**（2026-11-13）：
+
+同一份数据在内存里存在两份、且其中一份在不该在的地方 —— 这是本库最后两处「整份进堆」：
+
+| 数据 | 旧通道 | 现通道 |
+| --- | --- | --- |
+| 模型 | `ModelResourceLoader.load()` 整份读成 `byte[]` → ORT 再拷进 native | 文件路径直接交给 ORT：`createSession(String, SessionOptions)` |
+| PDF | `Files.readAllBytes` 整份读进堆 → `Loader.loadPDF(byte[])`（随机访问缓冲持有到文档关闭） | 文件路径直接交给 PDFBox：`Loader.loadPDF(File)`（按需读盘） |
+
+- **模型**：文件系统路径走 ORT 的**路径版**会话 API，Java 堆上不再出现与模型等大的数组
+  （medium 档 rec 模型约 73 MiB，此前是启动期最大的一块瞬时堆）。
+  ⚠️ **jar 内的 classpath 资源给不了路径** —— 那条只能退回字节版 `createSession(byte[], ...)`；
+  `ModelResourceLoader.load()` 因此**不能删**（字典加载也在用）。
+  ⚠️ **数值必须逐位不变**：两条通道是同一份模型字节、同一套 SessionOptions，
+  输出张量逐位一致（回归测试 `ModelSessionLoadingTest`）。
+- **PDF**：与图片通道（`Imgcodecs.imread(path)`，native 读盘）口径对齐 —— 路径入口不再整份读进堆。
+  ⚠️ **行为变更**：PDFBox 会持有该文件的读句柄直到文档关闭 ⇒ Windows 上处理期间该文件
+  **不能删除 / 改名**。字节入口 `run(byte[])` 不受影响。
+  回归测试 `PdfEngineRunPdfIntegrationTest#filePathInput_producesSameResultsAsByteInput`
+  （文本层与渲染通道各比一次，文本 / 置信度 / 框坐标全等）。
+
 **String 实例方法每次调用都重新编译正则（structured 模块已全量预编译）**：
 
 `String#matches` / `String#replaceAll` / `String#split` 的入参是**正则字符串**，
