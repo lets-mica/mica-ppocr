@@ -369,9 +369,6 @@ public final class PPOcrV6Engine implements Closeable {
 		// 预热：把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到构造期，
 		// 消除「容器刚起来时第一个请求显著慢于后续」。
 		// 失败只记 WARN，不影响引擎可用性（模型 / native / session 已在上面校验过）。
-		// 预热：把 ONNX Runtime 的计算图优化、内存池初始化与 JIT 提前到构造期，
-		// 消除「容器刚起来时第一个请求显著慢于后续」。
-		// 失败只记 WARN，不影响引擎可用性（模型 / native / session 已在上面校验过）。
 		warmUp();
 	}
 
