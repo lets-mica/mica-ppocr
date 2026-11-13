@@ -63,7 +63,8 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       ├── postprocessor/{DbDetParams, DbPostProcessor, CtcLabelDecoder, DocOrientationPostprocessor}.java
 │       ├── pdf/                          ← PDF 双通道（与 engine 同模块）
 │       │   ├── PdfOcrConfig.java         ← renderDpi / minTextChars / minReadableRatio / forceOcr
-│       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分）
+│       │   ├── PdfTextExtractor.java      ← 文本层坐标抽取（行聚类 + 大间距拆分，point 坐标）
+│       │   ├── PdfPageGeometry.java       ← point → 渲染图像素换算（旋转 + DPI 缩放，零 PDFBox 引用）
 │       │   ├── PdfTextQuality.java       ← 文本层质量评分（字符数 + 可读占比）
 │       │   ├── PdfPageResult.java        ← per-page 结果（pageIndex + viaOcr）
 │       │   ├── PdfRuntime.java           ← 唯一直接触碰 PDFBox API 的类
@@ -528,6 +529,29 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 —— ①缺依赖报错可读 ②缺依赖不影响图片推理 ③引擎 class 文件里**没有** PDFBox 类引用
 （常量池里的类引用是 `org/apache/pdfbox/...` 斜杠形式；错误文案里的依赖坐标是点分字符串常量，不算）。
 
+### PDF 双通道：框坐标单位统一为渲染图像素（改 PDF 通道时必须保留）
+
+两条通道产出的框必须落在**同一坐标系**（按 `renderDpi` 渲染的位图像素）：
+
+- **文本层通道**抽出的坐标是 **PDF point**（1/72 英寸），**已按裁剪框归一**（裁剪框左上角为原点、y 向下），
+  且**不含页面 `/Rotate` 旋转** —— PDFBox 的 `getXDirAdj/getYDirAdj` 是「文本方向调整」坐标，
+  页面旋转调整的是 `getX/getY`，两者不是一回事；
+- **渲染通道**的框是渲染位图的像素坐标（`PDFRenderer` 按**裁剪框** + `/Rotate` 渲染）。
+
+⇒ `PdfRuntime` 用 `PdfPageGeometry` 做「旋转 → 缩放」换算后再输出：
+`/Rotate` 90/180/270 各有对应的轴交换公式，最后统一乘 `renderDpi / 72` 换成像素。
+`renderDpi` 因此**同时是两条通道的坐标单位基准**。
+
+⚠️ **别把文本层坐标直接当像素用**：同一份 PDF 里电子页与扫描页混排时，
+两套坐标系的框会混在同一个结果列表里，下游 `fieldBoxes` 回填位置会整体错位。
+回归护栏：`mica-ppocr-core/src/test/java/net/dreamlu/mica/ai/ppocr/pdf/PdfTextLayerCoordinateTest.java`
+—— 把页渲染出来取**墨迹包围盒**当真值，逐边校验文本层框；
+覆盖 4 种 `/Rotate`、裁剪框偏移、双通道混排。**A/B 实测**：去掉换算后该类 6 个用例全红。
+纯数学部分另见 `PdfPageGeometryTest`（零 PDFBox / 零 OpenCV）。
+
+⚠️ **竖排文本仍是文本层通道的盲区**：PDFBox 的「文本方向调整」会把竖排**摆正**成水平，
+坐标与渲染图对不上 —— 这类版式要靠 `forceOcr=true` 兜底（页面 `/Rotate` 则已正确处理，不再是盲区）。
+
 ### mica-ppocr-structured
 
 - **`BaseStructuredParser<R>`** — SPI **抽象类**（v1.1.3 起由接口改为抽象类），规范所有解析器的入口签名
@@ -599,6 +623,19 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   其余 9 个直接继承 `BaseStructuredParser<R>`。
   Spring Boot / Solon 通过 `PPOcrTemplate.xxx()` getter（10 个）获取已绑定 engine 的解析器实例。
   调用方也可直接 `new XxxParser(engine).parse(bytes)` 一站式调用。
+
+- **发票明细表的列归属判定**（`invoice/InvoiceTableParser`，改这张表必须保留）——
+  列区间 = 「表头框左右各放宽 `xTolerance`」，值框归属该列的判定口径是
+  **「值框中心 或 值框左边缘落在列区间内」**：
+  - ⚠️ **不能只看中心**：票面数值列常是「表头居中 + 值右对齐」，
+    值框整体落在表头框右侧，中心会越过表头右缘整整一个框宽。
+    实测数电票（200 DPI 渲染）：金额列表头 `金　额` 框 `[1153,1228]`、
+    值框 `99.62` 为 `[1244,1308]`、中心 `1276` —— 越过表头右缘 48px，
+    只看中心 ⇒ **整列漏值，明细金额丢失**。
+  - ⚠️ **也不能用「区间重叠」**：增值税票里单价列没有对应表头，
+    单价值框与金额列仅搭接 3px，重叠判定会把两行金额串成 `99.6299.62`。
+  - 「中心或起点」是原「只看中心」的**超集** ⇒ 原先能匹配的框一个都不会丢。
+  回归护栏：`InvoiceParserTest#parse_tableValueRightAlignedToHeader_keepsAmount`。
 
 - **通用解析器**（`generic/`，v1.2.5 起）— **声明式 schema 入口**，与上面 10 个强类型 parser
   **并行存在**（不替换、不迁移存量 API）。新增单据类型写一份 `OcrFieldSchema` 即可抽取字段，

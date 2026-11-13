@@ -41,6 +41,11 @@ public class PdfOcrConfig {
 
 	/**
 	 * 渲染通道输出 DPI（默认 200，发票/证件类建议 200~300）。
+	 *
+	 * <p><b>同时是 PDF 双通道的坐标单位基准</b>：两条通道产出的框都统一为
+	 * 「按此 DPI 渲染的位图」的像素坐标 —— 文本层的 point 坐标会按
+	 * {@code renderDpi / 72} 缩放（并补上页面 {@code /Rotate} 旋转），
+	 * 因此同一份 PDF 里即使电子页走文本层、扫描页走 OCR，框也能对照同一张渲染图定位。
 	 */
 	@Builder.Default
 	private final int renderDpi = 200;

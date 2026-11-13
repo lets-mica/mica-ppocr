@@ -130,10 +130,83 @@ final class TestPdfFactory {
 	}
 
 	/**
+	 * 生成带页面几何（{@code /Rotate} + 裁剪框）的文字型 PDF。
+	 *
+	 * <p>媒体框固定 A4；裁剪框为 null 时用媒体框（即无裁剪偏移）。
+	 *
+	 * @param rotation 页面旋转角（0/90/180/270）
+	 * @param cropBox  裁剪框 [llx, lly, urx, ury]（point）；null 表示不裁剪
+	 * @param specs    文本绘制规格
+	 * @return PDF 字节
+	 */
+	static byte[] textPdfWithGeometry(int rotation, float[] cropBox, TextSpec... specs) throws IOException {
+		try (PDDocument doc = new PDDocument()) {
+			PDPage page = new PDPage(PDRectangle.A4);
+			if (cropBox != null) {
+				page.setCropBox(new PDRectangle(cropBox[0], cropBox[1], cropBox[2], cropBox[3]));
+			}
+			page.setRotation(rotation);
+			doc.addPage(page);
+			try (PDPageContentStream cs = new PDPageContentStream(doc, page)) {
+				for (TextSpec s : specs) {
+					cs.beginText();
+					cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), s.fontSize);
+					cs.newLineAtOffset(s.x, s.baselineY);
+					cs.showText(s.text);
+					cs.endText();
+				}
+			}
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			doc.save(out);
+			return out.toByteArray();
+		}
+	}
+
+	/**
+	 * 生成「电子页 + 扫描页」混合 PDF：第 1 页有文本层，第 2 页仅位图（无文本层）。
+	 *
+	 * <p>用于验证同一份文档里两条通道产出的框落在同一坐标系。
+	 */
+	static byte[] mixedTextAndImagePdf() throws IOException {
+		try (PDDocument doc = new PDDocument()) {
+			PDPage textPage = new PDPage(PDRectangle.A4);
+			doc.addPage(textPage);
+			try (PDPageContentStream cs = new PDPageContentStream(doc, textPage)) {
+				cs.beginText();
+				cs.setFont(new PDType1Font(Standard14Fonts.FontName.HELVETICA), 12);
+				cs.newLineAtOffset(100, 700);
+				// 字符数须超过默认 minTextChars=20，否则该页会被判为「无文本层」走 OCR 通道
+				cs.showText("ELECTRONIC INVOICE SAMPLE");
+				cs.endText();
+			}
+
+			BufferedImage image = new BufferedImage(400, 200, BufferedImage.TYPE_INT_RGB);
+			Graphics2D g = image.createGraphics();
+			try {
+				g.setColor(Color.WHITE);
+				g.fillRect(0, 0, 400, 200);
+				g.setColor(Color.BLACK);
+				g.drawRect(20, 20, 360, 160);
+			} finally {
+				g.dispose();
+			}
+			PDPage imagePage = new PDPage(PDRectangle.A4);
+			doc.addPage(imagePage);
+			PDImageXObject pdImage = LosslessFactory.createFromImage(doc, image);
+			try (PDPageContentStream cs = new PDPageContentStream(doc, imagePage)) {
+				cs.drawImage(pdImage, 50, 600, 400, 200);
+			}
+
+			ByteArrayOutputStream out = new ByteArrayOutputStream();
+			doc.save(out);
+			return out.toByteArray();
+		}
+	}
+
+	/**
 	 * 生成全图型 PDF（模拟扫描件）：整页仅一张位图，无任何文本层。
 	 */
-	static byte[] imageOnlyPdf() throws IOException {
-		BufferedImage image = new BufferedImage(400, 200, BufferedImage.TYPE_INT_RGB);
+	static byte[] imageOnlyPdf() throws IOException {		BufferedImage image = new BufferedImage(400, 200, BufferedImage.TYPE_INT_RGB);
 		Graphics2D g = image.createGraphics();
 		try {
 			g.setColor(Color.WHITE);

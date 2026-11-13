@@ -21,6 +21,8 @@ import net.dreamlu.mica.ai.ppocr.postprocessor.DbDetParams;
 import net.dreamlu.mica.ai.ppocr.utils.BufferedImageUtils;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
 import org.apache.pdfbox.rendering.ImageType;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.opencv.core.Mat;
@@ -44,6 +46,11 @@ import java.util.List;
  * <p><b>调用前提</b>：{@link PdfDependency#isAvailable()} 必须为 {@code true}。
  *
  * <p>无状态可复用（内部 {@link PdfTextExtractor} 线程安全），建议单例使用。
+ *
+ * <p><b>坐标单位</b>：两条通道产出的框最终统一为<b>渲染图像素坐标</b> ——
+ * 文本层的 point 坐标经 {@link PdfPageGeometry} 做「页面旋转 → DPI 缩放」换算，
+ * 渲染通道的框本就是渲染位图的像素坐标。调用方拿到任一页的框，
+ * 都能直接对照「同一页、同一 {@code renderDpi} 的渲染图」定位。
  *
  * @author L.cm
  */
@@ -87,6 +94,10 @@ public class PdfRuntime {
 	 * 按 {@code config} 遍历所有页：文本层质量达标时直接走 {@link PdfTextExtractor}，
 	 * 否则降级到渲染 + OCR。{@code forceOcr=true} 时跳过文本层抽取，全走 OCR。
 	 *
+	 * <p>文本层抽出的坐标单位是 PDF point，渲染通道的坐标单位是渲染位图像素，
+	 * 两者在进入结果列表前统一换算到<b>渲染图像素坐标</b>（见 {@link #toRenderedPixels}），
+	 * 避免同一份 PDF 里两种通道产出两套坐标系的框。
+	 *
 	 * @param doc       已加载的 PDF 文档（不可为 null）
 	 * @param config    PDF 配置（不可为 null）
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
@@ -108,13 +119,37 @@ public class PdfRuntime {
 			List<PPOcrV6Result> textResults = textExtractor.extract(doc, i);
 			PdfTextQuality quality = textExtractor.quality(textResults);
 			if (quality.usable(config.getMinTextChars(), config.getMinReadableRatio())) {
-				pages.add(new PdfPageResult(i, false, textResults));
+				pages.add(new PdfPageResult(i, false, toRenderedPixels(doc.getPage(i), textResults, config.getRenderDpi())));
 			} else {
 				renderer = ensureRenderer(doc, renderer);
 				pages.add(ocrPage(i, renderer, config, detParams, bridge));
 			}
 		}
 		return pages;
+	}
+
+	/**
+	 * 文本层 point 坐标 → 渲染图像素坐标。
+	 *
+	 * <p>文本层走 {@code TextPosition.getXDirAdj/getYDirAdj}，单位是 point 且不含页面旋转；
+	 * 渲染通道的框是渲染位图（裁剪框按 {@code renderDpi} 缩放并按 {@code /Rotate} 旋转）的像素坐标。
+	 * 此处按 {@link PdfPageGeometry} 做「旋转 → 缩放」换算，两条通道的框因此落在同一坐标系。
+	 *
+	 * @param page      PDF 页面（不可为 null）
+	 * @param results   文本层抽取结果（不可为 null）
+	 * @param renderDpi 渲染 DPI
+	 * @return 像素坐标下的结果列表
+	 */
+	private static List<PPOcrV6Result> toRenderedPixels(PDPage page, List<PPOcrV6Result> results, int renderDpi) {
+		PDRectangle cropBox = page.getCropBox();
+		PdfPageGeometry geometry = PdfPageGeometry.of(
+			cropBox.getWidth(), cropBox.getHeight(), page.getRotation(), renderDpi);
+		List<PPOcrV6Result> mapped = new ArrayList<>(results.size());
+		for (PPOcrV6Result result : results) {
+			mapped.add(new PPOcrV6Result(result.text(), result.score(),
+				geometry.toPixelBox(result.box()), result.rotatedDegrees()));
+		}
+		return mapped;
 	}
 
 	/**

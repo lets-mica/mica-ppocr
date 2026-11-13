@@ -98,6 +98,51 @@ class InvoiceParserTest extends ParserTestSupport {
 	 * 密码区散落字符（数字 + `<>` 混排）、全角空格分隔的表头（`金　额` / `税　额`）、
 	 * 明细含冲账行（`-0.20` + 免税）。
 	 */
+	/**
+	 * 增值税票明细表：<b>表头居中、数值右对齐</b> —— 值框整体落在表头框右侧，
+	 * 其中心越过表头右缘（200 DPI 渲染尺度下约 48px），只看中心会漏值。
+	 *
+	 * <p>坐标取自真实增值税电子普通发票 PDF（按 200 DPI 渲染的像素空间），
+	 * 文本为脱敏占位值。该版式的数值列表头居中、值右对齐，
+	 * 是「列归属判定只看框中心」最容易失效的场景。
+	 */
+	@Test
+	void parse_tableValueRightAlignedToHeader_keepsAmount() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			// 明细表表头（表头居中）
+			box("货物或应税劳务、服务名称", 114, 422, 414, 436),
+			box("规格型号", 525, 422, 625, 436),
+			box("单位", 697, 422, 747, 436),
+			box("数　量", 811, 422, 886, 436),
+			box("单　价", 972, 422, 1047, 436),
+			box("金　额", 1153, 422, 1228, 436),
+			box("税率", 1339, 422, 1389, 436),
+			box("税　额", 1475, 422, 1550, 436),
+			// 明细行 1：金额值框 [1244,1308] 整体在金额表头 [1153,1228] 右侧
+			box("*运输服务*客运服务费", 69, 456, 314, 472),
+			box("次", 708, 456, 733, 472),
+			box("1", 906, 456, 919, 472),
+			box("99.62", 1014, 456, 1078, 472),
+			box("99.62", 1244, 456, 1308, 472),
+			box("免税", 1350, 456, 1400, 472),
+			box("＊＊＊", 1561, 456, 1636, 472),
+			// 明细行 2（冲账行）
+			box("*运输服务*客运服务费", 69, 492, 314, 508),
+			box("-0.20", 1250, 492, 1308, 508),
+			box("免税", 1350, 492, 1400, 508),
+			box("＊＊＊", 1561, 492, 1636, 508)
+		);
+		InvoiceResult r = parse(PARSER, results);
+		assertNotNull(r);
+		// 明细行数与金额都不能丢
+		assertEquals(2, r.getItems().size());
+		assertEquals("*运输服务*客运服务费", r.getItems().get(0).getGoodsName());
+		assertEquals("99.62", r.getItems().get(0).getAmount());
+		assertEquals("免税", r.getItems().get(0).getTaxRate());
+		assertEquals("＊＊＊", r.getItems().get(0).getTaxAmount());
+		assertEquals("-0.20", r.getItems().get(1).getAmount());
+	}
+
 	@Test
 	void parse_pdfFragmentMergedLabels() {
 		List<PPOcrV6Result> results = CollUtil.listOf(

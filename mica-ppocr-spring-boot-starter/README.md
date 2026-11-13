@@ -100,7 +100,7 @@ mica:
 | `mica.ai.ppocr.enable-cpu-mem-arena` | boolean | `false` | CPU memory arena。高水位不归还 OS，动态分辨率下内存持续增长直至 OOM（[issue #14](https://github.com/lets-mica/mica-ppocr/issues/14)），默认关闭（吞吐约损 10%） |
 | `mica.ai.ppocr.enable-memory-pattern` | boolean | `false` | 内存模式优化。shape 变化时同样吃内存，建议与 `enable-cpu-mem-arena` 成对开启或成对关闭 |
 | `mica.ai.ppocr.pdf.enabled` | boolean | `true` | 是否应用以下 pdf 参数。`false` 时引擎一律使用默认值 |
-| `mica.ai.ppocr.pdf.render-dpi` | int | `200` | 渲染通道 DPI。调高提升小字精度，代价是渲染耗时与内存 |
+| `mica.ai.ppocr.pdf.render-dpi` | int | `200` | 渲染通道 DPI。调高提升小字精度，代价是渲染耗时与内存。**兼作 PDF 框坐标的单位基准**（两条通道统一为渲染图像素） |
 | `mica.ai.ppocr.pdf.min-text-chars` | int | `20` | 文本层判定的最少字符数。低于此值视为无文本层，走「渲染 + OCR」 |
 | `mica.ai.ppocr.pdf.min-readable-ratio` | double | `0.90` | 文本层判定中可读字符的最低占比。低于此值视为无文本层 |
 | `mica.ai.ppocr.pdf.force-ocr` | boolean | `false` | 强制走 OCR 通道（跳过文本层判定）。用于「扫描件却被标了文本层」的场景 |

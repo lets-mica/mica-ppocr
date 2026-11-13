@@ -68,7 +68,7 @@ mica:
       # ===== PDF 双通道（可选）=====
       # pdf:
       #   enabled: true                                       # 是否应用以下 pdf 参数（false = 一律用引擎默认值）
-      #   render-dpi: 200                                     # 渲染通道 DPI
+      #   render-dpi: 200                                     # 渲染通道 DPI（兼作 PDF 框坐标的单位基准）
       #   min-text-chars: 20                                  # 文本层最少字符数
       #   min-readable-ratio: 0.90                            # 文本层可读字符占比下限
       #   force-ocr: false                                    # 强制所有页走渲染 + OCR

@@ -211,8 +211,7 @@ final class InvoiceTableParser {
 			// oneLine/2 为界。
 			int yCenter = (LabelMatcher.minY(box) + LabelMatcher.maxY(box)) / 2;
 			if (yCenter <= headerMaxY - oneLine / 2) continue;
-			int centerX = (LabelMatcher.minX(box) + LabelMatcher.maxX(box)) / 2;
-			if (!inAnyColumn(centerX, headers)) continue;
+			if (!inAnyColumn(LabelMatcher.minX(box), LabelMatcher.maxX(box), headers)) continue;
 			int y0 = LabelMatcher.minY(box);
 			if (y0 < headerMinY - oneLine / 2) continue;
 			if (y0 > yLower) continue;
@@ -412,19 +411,65 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 	// 行聚类 / 列分配
 	// ========================================================================
 
-	private static boolean inAnyColumn(int centerX, Map<ColumnSpec, PPOcrV6Result> headers) {
+	/**
+	 * 框是否落在任一列的 x 区间内。
+	 *
+	 * <p>判定口径：<b>框中心 或 框左边缘</b> 落在列区间内即命中
+	 * （列区间 = 表头框左右各放宽 {@code xTolerance}）。
+	 *
+	 * <p><b>为什么要加「左边缘」</b>：票面的数值列常见「表头居中 + 值右对齐」——
+	 * 值框整体落在表头框右侧，其<b>中心</b>会越过表头右边缘整整一个框宽。
+	 * 实测数电票（200 DPI 渲染，A4 横向 1694px）：金额列表头 {@code 金　额} 框
+	 * {@code [1153,1228]}，值框 {@code 99.62} 为 {@code [1244,1308]}、
+	 * 中心 {@code 1276} —— 中心比表头右缘还远 48px，
+	 * 只看中心会把这类值<b>整个漏掉</b>（明细金额丢失）；
+	 * 而它的<b>起点</b> {@code 1244} 仍落在列区间内。
+	 *
+	 * <p><b>为什么不用「区间重叠」</b>：重叠会把「只搭上几个像素」的邻列框拉进来。
+	 * 实测增值税票布局（单价列无对应表头时）：单价值框 {@code [365,388]} 与金额列区间
+	 * {@code [385,472]} 仅搭接 3px，若按重叠判定就会串进金额列
+	 * （金额变成 {@code 99.6299.62}）。中心/起点判定不会有这种边缘串列。
+	 *
+	 * <p>「中心或起点」是原「只看中心」判定的<b>超集</b> ⇒ 原先能匹配的框一个都不会丢。
+	 *
+	 * @param boxMinX 框左边缘
+	 * @param boxMaxX 框右边缘
+	 * @param headers 全部表头
+	 * @return true 表示至少落在一列的 x 区间内
+	 */
+	private static boolean inAnyColumn(int boxMinX, int boxMaxX, Map<ColumnSpec, PPOcrV6Result> headers) {
+		int centerX = (boxMinX + boxMaxX) / 2;
 		for (Map.Entry<ColumnSpec, PPOcrV6Result> e : headers.entrySet()) {
 			ColumnSpec col = e.getKey();
 			PPOcrV6Result h = e.getValue();
 			int minX = LabelMatcher.minX(h) - col.xTolerance;
 			int maxX = LabelMatcher.maxX(h) + col.xTolerance;
-			if (centerX >= minX && centerX <= maxX) return true;
+			if (inColumn(centerX, boxMinX, minX, maxX)) return true;
 		}
 		return false;
 	}
 
 	/**
-	 * 行内列分配：box x 中心落在列区间内，且是该框最佳匹配列。
+	 * 框是否落在列区间内：中心或左边缘落在区间内即命中。
+	 *
+	 * @param centerX 框中心 x
+	 * @param boxMinX 框左边缘 x
+	 * @param colMinX 列区间左界
+	 * @param colMaxX 列区间右界
+	 * @return true 表示命中
+	 */
+	private static boolean inColumn(int centerX, int boxMinX, int colMinX, int colMaxX) {
+		if (centerX >= colMinX && centerX <= colMaxX) {
+			return true;
+		}
+		return boxMinX >= colMinX && boxMinX <= colMaxX;
+	}
+
+	/**
+	 * 行内列分配：box 的<b>中心或左边缘</b>落在列区间内（不是只看中心），且是该框最佳匹配列。
+	 *
+	 * <p>判定口径与理由见 {@link #inAnyColumn}：数值列「表头居中 + 值右对齐」时，
+	 * 值框中心会越过表头右缘整整一个框宽，只看中心会漏值。
 	 *
 	 * <p>最佳匹配判定（pattern-aware）：
 	 * <ol>
@@ -433,8 +478,8 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 	 *   <li>两边都匹配或都不匹配 → 按几何距离选最近列。
 	 * </ol>
 	 *
-	 * <p>解决相邻数值列 tolerance 重叠区（如金额"123.01"中心落入金额列右缘 +
-	 * 税率列左缘的重叠区）被几何最近逻辑误归到税率列、但因不匹配税率 pattern
+	 * <p>解决相邻数值列 tolerance 重叠区（如金额"123.01"同时压在金额列右缘 +
+	 * 税率列左缘）被几何最近逻辑误归到税率列、但因不匹配税率 pattern
 	 * 被丢弃导致金额丢失的问题。
 	 *
 	 * @param row     当前行候选框
@@ -452,7 +497,7 @@ private static void mergeContinuation(InvoiceItem prev, InvoiceItem cont) {
 		List<PPOcrV6Result> cells = new ArrayList<>();
 		for (PPOcrV6Result box : row) {
 			int centerX = (LabelMatcher.minX(box) + LabelMatcher.maxX(box)) / 2;
-			if (centerX < colMinX || centerX > colMaxX) continue;
+			if (!inColumn(centerX, LabelMatcher.minX(box), colMinX, colMaxX)) continue;
 			if (!isNearestColumn(centerX, col, headers, colCenter, box.text())) continue;
 			cells.add(box);
 		}

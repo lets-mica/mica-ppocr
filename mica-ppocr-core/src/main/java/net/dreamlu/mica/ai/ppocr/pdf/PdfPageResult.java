@@ -50,6 +50,9 @@ public class PdfPageResult {
 	private final boolean viaOcr;
 	/**
 	 * 该页文本框列表（与 {@code PPOcrV6Engine.run} 返回元素同构，可直接结构化解析）。
+	 *
+	 * <p><b>坐标单位</b>：渲染图像素（按 {@code PdfOcrConfig#getRenderDpi()} 渲染的位图），
+	 * 两条通道一致 —— 文本层通道的 point 坐标已换算过来。
 	 */
 	private final List<PPOcrV6Result> results;
 }

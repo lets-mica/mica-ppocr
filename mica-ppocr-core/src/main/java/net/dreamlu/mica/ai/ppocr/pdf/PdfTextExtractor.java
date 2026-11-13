@@ -40,15 +40,25 @@ import java.util.List;
  *
  * <h3>坐标语义</h3>
  * 基于 {@link TextPosition#getXDirAdj()} / {@link TextPosition#getYDirAdj()}：
- * 页面<strong>视觉坐标系</strong>（左上原点，y 向下增长），与 OpenCV 图像坐标系
- * 一致，无需翻转。行粒度对齐 OCR det 框语义：同一基线上间距超过 2 倍字高的
+ * <strong>裁剪框内的 point 坐标</strong>（1 point = 1/72 英寸，左上原点、y 向下增长）。
+ * <ul>
+ *   <li><b>单位是 point，不是像素</b> —— 与渲染通道（渲染位图像素）不是同一坐标系，
+ *       混用会让框整体错位。{@link PdfRuntime} 在产出结果前统一换算成渲染图像素坐标。</li>
+ *   <li><b>已按裁剪框归一</b> —— 裁剪框左上角为原点，与渲染器以裁剪框为准的行为一致。</li>
+ *   <li><b>不含页面旋转</b> —— {@code getXDirAdj} 是「文本方向调整」坐标
+ *       （页面旋转调整的是 {@code getX/getY}），页面 {@code /Rotate} 由
+ *       {@link PdfPageGeometry} 显式补上。</li>
+ * </ul>
+ * 行粒度对齐 OCR det 框语义：同一基线上间距超过 2 倍字高的
  * 文本块（如票面的"发票号码: xxx"与"开票日期: xxx"）拆分为独立结果，
  * 与 DB 检测按视觉连通域切框的行为一致，保证下游结构化解析零适配。
  *
  * <h3>适用边界</h3>
- * 假定横排文本且页面无 {@code /Rotate} 旋转（发票 / 票据 / 报表场景全覆盖）。
- * 竖排或旋转版式文本层坐标不可信，应通过
- * {@link PdfOcrConfig#isForceOcr()} 强制走渲染 + OCR 通道。
+ * 文本层坐标对<b>横排</b>文本可靠（发票 / 票据 / 报表场景全覆盖），
+ * 页面 {@code /Rotate} 亦已正确处理。
+ * <b>竖排文本</b>（文本矩阵方向非水平）仍是本通道的盲区 ——
+ * PDFBox 的「文本方向调整」会把竖排摆正成水平，坐标与渲染图对不上，
+ * 这类版式应通过 {@link PdfOcrConfig#isForceOcr()} 强制走渲染 + OCR 通道。
  *
  * <p>无状态，可单例共享。
  */
