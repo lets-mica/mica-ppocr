@@ -876,9 +876,12 @@ DB 会把多个大数字与水印连成一个整体轮廓，框内真正笔画�
     放宽输入正则 ≠ 放宽输出。
   - ⚠️ **半角 `¥`(U+00A5) 在 GBK 里没有码位**，打印到 Windows 控制台会被替换成 `?`
     （`Charset.forName("GBK").newEncoder().canEncode("¥") == false`）——
-    看着像「OCR 认错了」，实际是输出通道吃掉了它。调试工具统一调
-    `BaseTest.useUtf8Console()`（只在 `main()` / `demo()` 调用，不进静态初始化块，
-    以免影响 surefire 跑测试时的输出编码）。
+    看着像「OCR 认错了」，实际是输出通道吃掉了它。
+    ⚠️ **不要在进程内 `System.setOut` 换流来「修复」它**（已于 2026-11-13 移除
+    `BaseTest.useUtf8Console()`）：那样写出去的是 UTF-8 字节 —— 重定向到文件时才对，
+    但交互式 GBK 控制台会按 CP936 解码 ⇒ **中文全变乱码**，比 `¥` 变 `?` 更糟。
+    **正确绕法**：跑 dump / demo 工具时加 `-Dstdout.encoding=UTF-8`（JDK 19+）
+    或 `-Dsun.stdout.encoding=UTF-8`（JDK 8），或把控制台代码页切到 65001。
 
 **别做**：调大 `DbDetParams.minSize` 过滤碎片（会连小字标签一起丢，如行驶证「所有人」变 null）。
 

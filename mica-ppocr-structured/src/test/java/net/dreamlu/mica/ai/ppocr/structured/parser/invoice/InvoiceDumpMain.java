@@ -49,7 +49,6 @@ public class InvoiceDumpMain {
 	};
 
 	public static void main(String[] args) throws IOException {
-		BaseTest.useUtf8Console();
 		Path outDir = Paths.get("mica-ppocr-structured/src/test/resources/ocr-json/invoice");
 		Files.createDirectories(outDir);
 		System.out.println("OCR JSON 输出目录: " + outDir.toAbsolutePath());

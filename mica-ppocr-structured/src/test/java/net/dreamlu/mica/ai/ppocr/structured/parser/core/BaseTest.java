@@ -29,10 +29,6 @@ import org.opencv.core.Scalar;
 import org.opencv.imgcodecs.Imgcodecs;
 import org.opencv.imgproc.Imgproc;
 
-import java.io.FileDescriptor;
-import java.io.FileOutputStream;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -185,26 +181,6 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 	}
 
 	/**
-	 * 把标准输出切到 UTF-8（demo / dump 工具的入口统一调用）。
-	 *
-	 * <p>Windows 控制台默认 GBK，而 GBK <b>没有</b>半角 {@code ¥}(U+00A5) 的码位
-	 * （{@code Charset.forName("GBK").newEncoder().canEncode("¥") == false}），
-	 * 打印时该字符会被静默替换成 {@code ?} —— 金额字段于是显示成
-	 * {@code ?280.5元}，看着像「OCR 把 ¥ 认错了」，实际是输出通道吃掉了它。
-	 *
-	 * <p>只在<b>工具入口</b>（{@code main()} / {@link #demo}）调用，不放静态初始化块 ——
-	 * 否则 surefire 跑测试时也会切走标准输出编码，Maven 控制台里的中文会变乱码。
-	 */
-	public static void useUtf8Console() {
-		try {
-			System.setOut(new PrintStream(new FileOutputStream(FileDescriptor.out), true, "UTF-8"));
-		} catch (UnsupportedEncodingException e) {
-			// UTF-8 是 JDK 必须支持的编码，实际走不到这里
-			System.err.println("切换 UTF-8 控制台失败: " + e.getMessage());
-		}
-	}
-
-	/**
 	 * 新建一个解析器实例（{@code engine} 传 null 即可，本基类已自行管理 OCR）。
 	 *
 	 * @return 解析器实例
@@ -249,7 +225,6 @@ public abstract class BaseTest<P extends BaseStructuredParser<R>, R> {
 	 * @param tiers     要跑的档位列表；为空时使用 {@link #DEMO_TIERS}
 	 */
 	public final void demo(String imagePath, String visPath, String... tiers) {
-		useUtf8Console();
 		String[] actualTiers = (tiers == null || tiers.length == 0) ? DEMO_TIERS : tiers.clone();
 		// 加载 OpenCV 原生库（本方法在构造引擎之前就直接用 Imgcodecs 读图 / 画框）
 		nu.pattern.OpenCV.loadLocally();

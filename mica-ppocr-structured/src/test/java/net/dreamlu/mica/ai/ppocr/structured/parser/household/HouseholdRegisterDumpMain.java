@@ -47,7 +47,6 @@ public class HouseholdRegisterDumpMain extends BaseTest<HouseholdRegisterParser,
 	};
 
 	public static void main(String[] args) throws IOException {
-		useUtf8Console();
 		Path outDir = Paths.get("mica-ppocr-structured/src/test/resources/ocr-json/household_register");
 		Files.createDirectories(outDir);
 		System.out.println("OCR JSON 输出目录: " + outDir.toAbsolutePath());

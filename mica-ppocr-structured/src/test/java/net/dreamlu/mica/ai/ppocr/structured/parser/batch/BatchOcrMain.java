@@ -131,7 +131,6 @@ public final class BatchOcrMain {
 	// ========================================================================
 
 	public static void main(String[] args) {
-		BaseTest.useUtf8Console();
 		ParserSpec spec = ParserSpec.of(PARSER_KEY);
 
 		// 解析目录 & 输出路径
