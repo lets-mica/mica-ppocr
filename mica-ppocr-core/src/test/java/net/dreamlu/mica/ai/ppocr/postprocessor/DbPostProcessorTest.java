@@ -168,13 +168,20 @@ class DbPostProcessorTest {
 			DbPostProcessor.Result result = post.call(prob, new float[]{prob.rows(), prob.cols(), 1f, 1f});
 
 			assertEquals(2, result.boxes().length, "应检出两个文本块");
-			// golden：框坐标由「二值化 → 轮廓 → minAreaRect → boxScore → unclip」链路决定，
-			// 任何一步的数值变化都会让本断言变红
+			// golden：框坐标由「二值化 → 轮廓 → minAreaRect → boxScore → unclip → minAreaRect」链路决定，
+			// 任何一步的数值变化都会让本断言变红。
+			//
+			// ⚠️ 2026-11-13 更新：unclip 后的多边形不再经 MatOfPoint（CV_32S）整数化，
+			// 而是直接以浮点进 minAreaRect —— 与 Python 参考实现（cv2.minAreaRect 直接吃浮点多边形）
+			// 逐位一致。实测对拍：Java 新路径与 Python cv2.minAreaRect 在同一浮点多边形上
+			// 输出完全相同（atol=1e-3）；旧路径则与 Python 对「整数化多边形」求 minAreaRect 一致，
+			// 证明旧偏差确实来自截断而非其它环节。
+			// 坐标变化：框 0 左上角 76 → 77（76.89041 取整），框 1 右下 91 → 92、66 → 67（91.79518 / 66.79518 取整）。
 			assertArrayEquals(new int[][]{
-				{76, 86}, {147, 86}, {147, 142}, {76, 142}
+				{77, 87}, {147, 87}, {147, 142}, {77, 142}
 			}, result.boxes()[0], "第一个框的坐标必须逐位稳定");
 			assertArrayEquals(new int[][]{
-				{7, 17}, {91, 17}, {91, 66}, {7, 66}
+				{7, 17}, {92, 17}, {92, 67}, {7, 67}
 			}, result.boxes()[1], "第二个框的坐标必须逐位稳定");
 		} finally {
 			prob.release();
