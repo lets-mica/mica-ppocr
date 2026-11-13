@@ -177,7 +177,12 @@ public class LabelMatcher {
 	public static LabeledMatch matchValueByCenterWithBox(List<PPOcrV6Result> results, String label) {
 		LabelHit labelHit = findLabelHit(results, label);
 		if (labelHit == null) {
-			log.warn("结构化解析：未找到标签 \"{}\"，该字段置 null", label);
+			// 字段级探测未命中是**正常结果**而非异常，故用 debug：
+			// ① 版面本身可能没有该字段（如身份证反面无"姓名"、副页无"号牌号码"）；
+			// ② 解析器后续还有正则 / 形态兜底路径，本次未命中不代表该字段最终取不到值；
+			// ③ 候选标签列表（如拼多多福袋的 5 个候选）逐个试探，
+			//    每次解析固定产出 N 条 miss，日志量与失败率无关。
+			log.debug("结构化解析：未找到标签 \"{}\"，该字段置 null", label);
 			return LabeledMatch.textOnly(null);
 		}
 		PPOcrV6Result labelBox = labelHit.box();
@@ -225,7 +230,9 @@ public class LabelMatcher {
 			}
 		}
 		if (best == null) {
-			log.warn("结构化解析：标签 \"{}\" 未匹配到值框，该字段置 null", label);
+			// 同上：标签定位到了、但右侧/下方没找到值框，仍属字段级 miss，
+			// 由解析器的正则兜底接手，降到 debug。
+			log.debug("结构化解析：标签 \"{}\" 未匹配到值框，该字段置 null", label);
 			return LabeledMatch.missingValue();
 		}
 		return LabeledMatch.of(best.text(), best);
