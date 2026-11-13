@@ -40,6 +40,14 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
+            <!--
+                必须显式写 provided：本模块重声明该依赖时若不带 scope，子模块声明会整体覆盖
+                父 pom 的声明 ⇒ scope 落回 compile，发布出去的 pom 里成了硬依赖，
+                下游被强塞 slf4j-api 2.0.20（与 Spring Boot 2.7 的 logback-classic 1.2.x
+                不兼容，消费者可能随机出现「No SLF4J providers were found」而全站日志哑掉）。
+                与 starter / solon 两端对齐为 provided。
+            -->
+            <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>org.slf4j</groupId>

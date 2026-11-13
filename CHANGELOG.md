@@ -2,7 +2,7 @@
 
 ## 发行版本
 
-### v1.2.6 - 2026-11-13
+### v1.2.6 - 未发布
 - perf(core): DB 后处理的二值化改为一次 Java 遍历直出 0/255 掩码 —— 原先走 OpenCV 的 `threshold` → `Core.multiply(255)` → `convertTo(CV_8U)` 三趟链，每次 OCR 要在 native 侧过两遍 CV_32F 中间结果（约 21 MB）。DB 后处理耗时 10.2 → 6.8 ms（-33%），每次 OCR 的 native 分配/释放量降到约 2.7 MB。**框坐标与识别文本逐位不变**（二值化掩码与 OpenCV 三趟链逐位对比，含「恰好等于阈值」的边界点），回归测试见 `DbPostProcessorTest`。
 - perf(core): det / rec 预处理的归一化改为按字节值预计算查表 —— uint8 像素值只有 256 种，原先内层循环每个像素要做 3 次浮点除法，现改为 256 项查表直接取值。det 预处理耗时 20.5 → 19.4 ms。**归一化张量逐位不变**（查表用与原表达式完全相同的运算顺序求值，换成乘以倒数会让末位漂移），由三个预处理器的 bit-exact 回归测试锁定。
 - perf(core): 检测最大边长限制默认 4000 → 1920 —— `detLimitType=min` + `detLimitSideLen=64` 下这是唯一的缩放闸门，此前对 2K~4K 图几乎不生效（行驶证 2988×2199 的检测输入是 2208×2976、共 657 万像素），而检测推理占整条链路的 74%。检测耗时随之下降：行驶证 1638 → 951 ms（1.72×）、发票 1495 → 1223 ms（1.22×）、PDF 通道（forceOcr，A4@200dpi）1374 → 1149 ms（1.20×）。**行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器的字段级比对中无任何字段变为 null，6 个业务字段有单字抖动（4 变差、2 变好）；用 `detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景会被本值二次截断，需自行调大。
@@ -16,6 +16,14 @@
 - fix(structured): 老版增值税发票的「价税合计（小写）」被误取成不含税金额 —— 「(小写)」框里的 ¥ 符号被 OCR 认成汉字时，小写金额取不到标签内提取，只能靠位置锚定兜底，而兜底会命中读序更靠前的明细表「金额」列（不含税金额）。现以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元即用反推值覆盖 —— 电子发票解析器本就有此兜底，老版增值税这条链路此前缺失。回归测试见 `InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`。
 - fix(structured): 金额字段的货币符号统一归一成半角 `¥` —— 票面字形随票据版本而变（老版蓝票全角 `￥`、新版电子票半角 `¥`），rec 模型忠实照抄，于是同一个金额字段在不同单据上会输出两种符号，下游做 `startsWith("￥")` 或字符串等值比对时会漏掉一半样本。现新增 `core/MoneyUtil` 作为唯一口径，火车票的「车票金额 / 不含税金额」与发票的「价税合计（小写）」一律输出半角 `¥`，OCR 把 `¥` 误识成 `?` 时一并还原（出租车票的金额本就是纯数字，不受影响；发票明细表的金额/税额同为纯数字）。⚠️ **行为变更**：火车票与发票的金额字段货币符前缀由「票面原样」改为「恒为半角 `¥`」，按全角 `￥` 前缀做字符串比对的代码需调整。回归测试见 `MoneyUtilTest`。
 - fix(test): demo / dump 调试工具的标准输出改按 UTF-8 输出 —— Windows 控制台默认 GBK，而 GBK 没有半角 `¥`(U+00A5) 的码位（`Charset.forName("GBK").newEncoder().canEncode("¥") == false`），打印时该字符被静默替换成 `?`，金额字段于是显示成 `?280.5元`，看着像「OCR 把 ¥ 认错了」。现由 `BaseTest.useUtf8Console()` 在工具入口（`main()` / `demo()`）把 stdout 切到 UTF-8 —— 只在工具入口调用、不放静态初始化块，以免影响 surefire 跑测试时的输出编码。
+- fix(core): 检测框坐标不再被整数化 —— `BoxUtil.orderMinAreaBoxPoints(float[][])` 原先把浮点多边形绕经 `MatOfPoint`（CV_32S）转成整数再进 `minAreaRect`，坐标在进模型前就丢了亚像素精度；现直接以浮点多边形进 `minAreaRect`（CV_32F）。**框坐标与 Python 参考实现对齐**（已把同一浮点多边形喂给 Python 的 `cv2.minAreaRect` 对拍，输出逐位一致，atol=1e-3；旧路径则与 Python 对「整数化多边形」的结果一致，证明偏差确实来自截断而非其它环节）。⚠️ **行为变更**：检测框坐标会变，约 98% 的框位移 ≤3px（`DbPostProcessorTest` 的 golden 已同步更新），下游若按像素坐标做业务判断需复核；**裁剪边界随框位移而变 ⇒ 个别文本框的识别结果会有细微出入**（如火车票人名多一个字），属几何对齐的直接后果，不是识别精度回退。
+- fix(build): `mica-ppocr-core` 的 `slf4j-api` 改为 `provided` scope —— 该模块重声明该依赖时没带 scope，子模块声明整体覆盖父声明 ⇒ scope 落回 `compile`，发布出去的 pom 里成了硬依赖，所有下游被强塞 slf4j-api 2.0.20；与 Spring Boot 2.7 的 logback-classic 1.2.x（slf4j 1.7 绑定方式）不兼容，消费者可能随机出现「No SLF4J providers were found」而全站日志哑掉。现与 starter / solon 两端对齐为 `provided`。⚠️ 行为变更：下游不再自动获得 slf4j-api —— 单独引入 `mica-ppocr-core`（不经 starter / plugin）的项目需自行引入 `org.slf4j:slf4j-api`。
+- fix(repo): `.gitignore` 的 medium 档模型豁免规则移到 `*.zip` 之后 —— gitignore 是「最后一条匹配者胜」，反选规则原先写在被忽略规则之前而被覆盖，medium 档模型 zip 之所以还在库里只是因为它们早已入库（已跟踪文件不受 gitignore 约束）。现新增或重新添加模型 zip 不再被静默忽略。
+- feat(structured): 身份证 / 驾驶证 / 银行卡三个解析器回填 `fieldBoxes` —— 此前只有行驶证 / 发票 / 营业执照 / 户口本 / 火车票 / 出租车票 / 拼多多七个解析器会登记「字段 → 原文框」的定位关系，这三个解析器拿到的框在取值后被丢弃。现 `ParsedField` 携带框坐标，解析器直接把定位关系交给下游，**10 个内置解析器现已全部支持 `fieldBoxes`**，字段可视化与高亮定位不再需要自己按文本二次匹配。⚠️ **行为变更**：这三个解析器的 `fieldBoxes` 由空 map 变为有内容。
+- fix(structured): `fieldBoxes` 不再登记「有框无值」的字段 —— 标签在但值没识别出来时、以及字段名拼错或结果类新增字段后忘了加分支时，原先仍会把框登记进去，调用方按 key 取值得到 null 却看到高亮框。现在只在真正赋值后才登记，未知字段名另加告警。
+- fix(structured): 通用解析器的日期归一化不再把长数字串修成假日期 —— `DATE` 归一化器原先直接交给日期修复器，而后者在数字超过 8 位时会滑窗取前 8 位，于是 18 位身份证号 `11010519491231002X` 被修成 `1101-05-19` —— 一个恰好合法的日期；又因为归一化发生在校验之前，这个假日期还能通过 `\d{4}-\d{2}-\d{2}` 形态校验，最终拿到满置信度且不触发人工复核。现加前置形态闸门：只有「恰好 8 位数字」或「含日期分隔符」的文本才进修复流程，其余原样保留交给规则判违规。⚠️ **行为变更**：通用解析器中长数字串不再被改写成日期。
+- fix(structured): 银行卡有效期补合并框兜底 —— 卡面「VALID THRU 12/25」被 OCR 合成一框时，独立值框不存在、正则兜底又是全匹配语义匹配不上整框文本，该字段整条静默丢失。现增加合并框剥值兜底，剥出的值同样要过一遍日期正则才采信。
+- perf(structured): 户口本解析器的正则全部预编译 + 标签定位去掉重复扫描 —— 户口本解析器有 19 处正则写在 `String#matches` / `String#replaceAll` 的实参里、每次调用重新编译（其中 3 处在逐框循环内），现提为类常量；同时 `matchValueFromPrefixWithBox` 不再把同一次标签定位的完整回退链跑两遍。**解析结果逐字不变**。
 
 ### v1.2.5 - 2026-11-01
 - feat(structured): 新增通用解析器（声明式 schema 入口）。`structured/parser/generic/` 提供 `OcrFieldSchema` / `OcrStructuredParser` / `OcrStructuredResult` / `FieldSpec` / `FieldRule` / `ValueNormalizer` / `ValueLocator` 共 7 个类，新增单据类型写一份 schema 即可抽取字段、无需再实现解析器类，与存量 10 个强类型 parser 并行存在；取值走「标签定位 → 合并框剥值 → 正则兜底」，校验位与字段置信度复用 `Validations` / `FieldConfidence`，Spring Boot / Solon `PPOcrTemplate` 同步新增 `generic(schema)`。

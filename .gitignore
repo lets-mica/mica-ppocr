@@ -35,9 +35,6 @@ nbdist/
 .opencode
 -p
 
-### models ###
-!models/ppocr-v6/medium/*.zip
-
 ### test run artifacts ###
 # 多档位回归跑出的可视化产物（带档位后缀），单档的 vis.png 仍是人工留存基线，不忽略
 test_images/**/vis.*.png
@@ -50,6 +47,12 @@ target/
 *.zip
 *.tar
 *.tar.gz
+
+### models ###
+# ⚠️ 必须排在上面的 *.zip 之后 —— gitignore 是「最后一条匹配者胜」，
+# 反选规则写在 *.zip 之前会被覆盖，medium 档模型 zip 会被静默忽略
+# （git add 不报错，CI 上模型缺失导致测试失败或静默退化）。
+!models/ppocr-v6/medium/*.zip
 
 # logs #
 logs

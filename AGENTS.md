@@ -495,6 +495,9 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - `NdArrayUtils` — argmax/max/stack/pad/clip over float arrays.
 
   - `BoxUtil` — `sortQuadBoxes` (reading order), minAreaRect/boxPoints.
+    ⚠️ **浮点多边形必须直接进 `MatOfPoint2f`（CV_32F），不要经 `MatOfPoint`（CV_32S）** ——
+    那条整型中转会把坐标截断，是与 Python 参考实现框坐标偏差的主因（详见「Known divergences」）。
+    整数轮廓（`findContours` 的产物）走 `orderMinAreaBoxPoints(MatOfPoint)` 入口即可，无损失。
 
   - `Offset` — pyclipper `PyclipperOffset` equivalent via a pure-Java rounded offset
     (每边外法向平移 + 顶点圆弧，每 90° 8 段，段数**四舍五入**).
@@ -560,9 +563,12 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   （`String` / `File` / `Path` / `byte[]` / `InputStream` × 带/不带 `DbDetParams`），内部完成 OCR 推理后再调 `parseResults`。
 
 - **`BaseStructuredResult`** — 结果基类，统一持有 `rawResults`（完整 OCR 原始框）与 `fieldBoxes`（字段 → 坐标列表）。
-  ⚠️ `fieldBoxes` 目前**并非所有解析器都回填**：`invoice`（Vat + Electronic）/ `business` / `vehicle` /
-  `household` / `pdd` / `train` / `taxi` 会回填；`idcard` / `driver` / `bankcard` 三个解析器
-  仍走丢弃 box 的文本版 `LabelMatcher.matchValue(...)`，`fieldBoxes` 为空 map。
+  ✅ **10 个内置解析器现已全部回填 `fieldBoxes`**（2026-11-13 起 `idcard` / `driver` / `bankcard` 也补齐）。
+  机制：`ParsedField` 现在**携带框坐标**（`LabelMatcher.toParsedField` 从 `LabeledMatch` 的 `matches()` 带出），
+  解析器用 `LabelMatcher.applyFieldBox(result, fieldName, parsedField)` 登记 —— 无需二次调用标签定位。
+  ⚠️ **只在真正赋值后才登记**：标签在但值没识别出来、或字段名拼错（结果类新增字段后忘了加 `switch` 分支）
+  时**不登记**，否则调用方按 key 取值得到 null 却看到高亮框；未知字段名另打 warn。
+  ⚠️ `ParsedField.boxes` **不参与 equals / hashCode** —— 字段的身份是「值 + 来源 + 置信度」，框是定位元数据。
 
   **正确性层（v1.2.5 起）** —— 另持有 `fieldConfidences`（字段 → `FieldConfidence`）、
   `needsReview`（是否建议人工复核）与 `reviewReasons`（复核原因）。
@@ -651,6 +657,12 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
   - `ValueNormalizer`：`NONE` / `DIGITS` / `COMPACT` / `DATE`。
     ⚠️ **归一化在"取值之后、校验之前"执行** —— 调用方拿到的值与规则判定依据的值永远是同一个。
     ⚠️ 身份证号请用 `COMPACT`（保留末位 `X`），**不要用 `DIGITS`**（会把 `X` 丢掉）。
+    ⚠️ **`DATE` 有前置形态闸门**（2026-11-13）：只有「去非数字后恰好 8 位」或「含日期分隔符
+    （`年`/`月`/`日` 或 `-`/`.`/`/`）」的文本才进 `DateRepair`，其余原样返回。
+    没有这道闸门时，`DateRepair` 的滑窗路径（数字 > 8 位时取前 8 位）会把 18 位身份证号
+    `11010519491231002X` 修成 `1101-05-19` —— 恰好合法；而归一化在校验之前，这个假日期
+    还能通过 `\d{4}-\d{2}-\d{2}` 形态校验 ⇒ 满置信度 + 不触发复核 ⇒ **静默错误**。
+    ⚠️ `DateRepair` 本身的滑窗路径**不要删** —— 它对「日期 + 时间」的文本是有用的。
   - `OcrStructuredResult`：`values`（字段名 → 值）/ `missingFields` / 继承来的 `fieldConfidences` /
     `needsReview` / `reviewReasons` / `fieldBoxes`；另有 `allTrusted()` 与 `getNeedingReviewFields()`。
   - **取值路径**（按优先级）：标签定位 → 合并框剥值 → 内容正则兜底 → 字段缺失。
@@ -725,14 +737,23 @@ Python↔Java mapping: `numpy`→`utils.NdArrayUtils`, `pyclipper`→`utils.Offs
 
 - `pyclipper` uses scaled-integer math and quantizes its output to integers, while
   `Offset.unclip` works in doubles → the unclip polygons differ by <1px.
-  ⚠️ **The dominant source of the final-box divergence is elsewhere, and was previously
-  misattributed to JTS**: `BoxUtil.orderMinAreaBoxPoints(float[][])` routes the float polygon
-  through `MatOfPoint` (CV_32S), truncating coordinates to integers before `minAreaRect`.
+  ✅ **The dominant source of the final-box divergence is fixed (2026-11-13)** — it had
+  previously been misattributed to JTS. `BoxUtil.orderMinAreaBoxPoints(float[][])` used to
+  route the float polygon through `MatOfPoint` (CV_32S), truncating coordinates to integers
+  before `minAreaRect`; it now goes straight to `MatOfPoint2f` (CV_32F).
   Measured on 3827 real detection boxes, dropping that truncation lifts the final-box
-  agreement with the Python reference from 5.1% to 55.4% (ideal Minkowski geometry: 55.2%) —
-  i.e. the truncation, not the unclip implementation, is the main gap.
-  Fixing it moves ~98% of boxes by ≤3px ⇒ it is a **separate, deliberate change**, not a
-  drive-by cleanup.
+  agreement with the Python reference from 5.1% to 55.4% (ideal Minkowski geometry: 55.2%).
+  **验证方式**：把 Java 的 unclip 浮点多边形喂给 Python 的 `cv2.minAreaRect`，输出逐位一致
+  （atol=1e-3）；旧路径则与 Python 对「整数化多边形」求 minAreaRect 一致 ——
+  证明偏差确实来自截断而非其它环节。
+  ⚠️ **框坐标会变**：约 98% 的框位移 ≤3px（`DbPostProcessorTest` 的 golden 已同步更新）。
+  ⚠️ **不要再把 float 多边形塞回 `MatOfPoint`** —— 那是这条偏差的根因，已被移除。
+  ⚠️ **已入库的 OCR 快照仍带着修复前的框**：`mica-ppocr-structured/src/test/resources/ocr-json/**`
+  是历史 dump 产物（`TrainDumpMain` / `InvoiceDumpMain` 等跑真实图片写出来的），修复后引擎的框与
+  文本会有细微变化（如火车票 train3 的姓名由「裴丽丽」变「裴装丽丽」—— 裁剪边界随框位移而变，
+  个别文本多一个字）。这些快照是**解析器的 golden 输入**，测试只读不写，**不要随手重跑 dump 刷新**：
+  刷新会连带改写测试断言，且 dump 工具直接写源码树、会在工作区留下未预期的改动。
+  需要与引擎对齐时，单独跑对应 dump 工具并同步更新断言。
 
 - No CoreML provider in ONNX Runtime Java API.
 
@@ -983,6 +1004,14 @@ Java 侧堆分配，峰值存活堆用 1ms 采样线程取中位数）：
 
 > 升级任何依赖后，**必须重跑一次字节码校验**（`javap -v -cp <jar> <类>` 看 major version）。
 > 版本号漂移会让本表「已校验 Java 8」的结论失效。
+>
+> ⚠️ **scope 约定（改动模块 pom 时必须守住）**：
+> - `slf4j-api` 在 **core** 里必须是 `provided` —— 该模块重声明该依赖时若不带 scope，
+>   子模块声明会**整体覆盖**父声明 ⇒ scope 落回 `compile`，发布出去的 pom 成了硬依赖，
+>   下游被强塞 slf4j-api 2.0.20（与 Spring Boot 2.7 的 logback-classic 1.2.x 不兼容，
+>   消费者会随机出现「No SLF4J providers were found」）。starter / solon 两端已是 `provided`。
+> - `pdfbox` 在 core 里必须保持 `optional` —— 只做图片 OCR 的项目不该被动背上 pdfbox 那一套。
+> - 各模块自身的版本一律用 `${revision}`，**不要在模块 pom 里写死版本号**（避免版本漂移）。
 
 ---
 
