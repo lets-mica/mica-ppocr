@@ -86,7 +86,8 @@ mica-ppocr/                     ← parent pom (packaging=pom)
 │       │   ├── ValidationStatus.java       ← 校验三态枚举
 │       │   ├── LabelMatchStatus.java       ← 标签命中三态（FOUND/LABEL_WITHOUT_VALUE/NOT_FOUND）
 │       │   ├── LabelAliases.java           ← 标签别名表（规范标签 → OCR 认错的写法）
-│       │   └── DateRepair.java             ← 日期修复（分隔符被认错时还原 yyyy-MM-dd）
+│       │   ├── DateRepair.java             ← 日期修复（分隔符被认错时还原 yyyy-MM-dd）
+│       │   └── MoneyUtil.java              ← 金额货币符号归一化（全角￥ / OCR误识? → 半角¥）
 │       ├── generic/                       ← 通用解析器（声明式 schema 入口，与存量 10 个强类型 parser 并行）
 │       │   ├── OcrFieldSchema.java         ← 声明式 schema（字段名 / 标签 / 正则 / 规则 / 归一化）
 │       │   ├── OcrStructuredParser.java    ← 通用解析器（extends BaseStructuredParser）
@@ -835,7 +836,21 @@ DB 会把多个大数字与水印连成一个整体轮廓，框内真正笔画�
     `InvoiceParser` 分发到哪条链路取决于**有没有「校验码」标签**（有 → VAT），
     所以 5 张老版样图全部走 VAT 分支。
   - 回归测试：`InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`
-    （撤掉兜底即红，报 `expected: <￥400.00> but was: <￥377.36>`）。
+    （撤掉兜底即红，报 `expected: <¥400.00> but was: <¥377.36>`）。
+- **金额字段的货币符号统一为半角 `¥`** ——
+  票面字形随票据版本而变（老版蓝票全角 `￥`、新版电子票半角 `¥`），rec 模型忠实照抄，
+  同一个金额字段在不同单据上会输出两种符号 ⇒ 下游做 `startsWith("￥")` 或字符串等值比对
+  会漏掉一半样本。
+  - **唯一口径在 `core/MoneyUtil.normalizeYuanPrefix()`** —— 全角 `￥` 与 OCR 误识的 `?`
+    一律还原成半角 `¥`；已接入火车票（`amount` / `amountExcludingTax`）与
+    发票（`totalAmountLower`）。出租车票与发票明细表的金额本就是**纯数字**，不涉及。
+  - ⚠️ **输入侧正则仍要同时容忍 `¥` 与 `￥`**（`[¥￥]`）—— 归一化发生在**匹配之后**，
+    放宽输入正则 ≠ 放宽输出。
+  - ⚠️ **半角 `¥`(U+00A5) 在 GBK 里没有码位**，打印到 Windows 控制台会被替换成 `?`
+    （`Charset.forName("GBK").newEncoder().canEncode("¥") == false`）——
+    看着像「OCR 认错了」，实际是输出通道吃掉了它。调试工具统一调
+    `BaseTest.useUtf8Console()`（只在 `main()` / `demo()` 调用，不进静态初始化块，
+    以免影响 surefire 跑测试时的输出编码）。
 
 **别做**：调大 `DbDetParams.minSize` 过滤碎片（会连小字标签一起丢，如行驶证「所有人」变 null）。
 

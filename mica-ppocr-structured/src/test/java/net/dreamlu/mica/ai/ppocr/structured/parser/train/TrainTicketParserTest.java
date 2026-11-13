@@ -138,7 +138,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		assertEquals("二等座", r.getSeatClass());
 		assertEquals("张三", r.getPassengerName());
 		assertEquals("310108200601011234", r.getIdNumber());
-		assertEquals("￥26.00元", r.getAmount());
+		assertEquals("¥26.00元", r.getAmount());
 		assertEquals("1234567890", r.getTicketNo());
 	}
 
@@ -186,7 +186,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		assertEquals("上海虹桥", r.getDeparture());
 		assertEquals("杭州东", r.getArrival());
 		assertEquals("D456", r.getTrainNumber());
-		assertEquals("￥73.00元", r.getAmount());
+		assertEquals("¥73.00元", r.getAmount());
 	}
 
 	/**
@@ -207,7 +207,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		assertEquals("郑州", r.getArrival());
 		assertEquals("K789", r.getTrainNumber());
 		assertEquals("硬座", r.getSeatClass());
-		assertEquals("￥148.50元", r.getAmount());
+		assertEquals("¥148.50元", r.getAmount());
 	}
 
 	/**
@@ -231,9 +231,31 @@ class TrainTicketParserTest extends ParserTestSupport {
 		);
 		TrainTicketResult r = parse(new TrainTicketParser(null), results);
 		assertNotNull(r);
-		assertEquals("￥26.00元", r.getAmount());
-		assertEquals("￥23.01元", r.getAmountExcludingTax());
+		assertEquals("¥26.00元", r.getAmount());
+		assertEquals("¥23.01元", r.getAmountExcludingTax());
 		assertEquals("始发改签", r.getChangedFlag());
+	}
+
+	/**
+	 * 金额货币符号归一化：票面全角 ￥ 统一输出半角 ¥。
+	 *
+	 * <p>票面字形随票据版本而变（老版蓝票全角、新版电子票半角），rec 模型忠实照抄；
+	 * 解析层统一成半角，下游不必两个符号都判。
+	 */
+	@Test
+	void parse_amountCurrencySymbolNormalizedToHalfWidth() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("始发站", 50, 40, 130, 70),
+			box("北京南站", 150, 40, 290, 70),
+			box("到达站", 400, 40, 480, 70),
+			box("廊坊站", 500, 40, 620, 70),
+			box("G1234", 100, 110, 180, 140),
+			// 老版蓝票：全角 ￥
+			box("￥26.00元", 490, 110, 600, 140)
+		);
+		TrainTicketResult r = parse(new TrainTicketParser(null), results);
+		assertNotNull(r);
+		assertEquals("¥26.00元", r.getAmount());
 	}
 
 	/**
@@ -320,7 +342,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		assertEquals("小度", r.getPassengerName());
 		// P0 优化：保留脱敏形式（业务可决定是否使用）
 		assertEquals("3101082006****0000", r.getIdNumber());
-		assertEquals("￥26.00", r.getAmount());
+		assertEquals("¥26.00", r.getAmount());
 		assertEquals(null, r.getAmountExcludingTax());
 		// 票号：train1 没有 7-10 位纯数字票号（电子发票版无纸质票号）
 		assertEquals(null, r.getTicketNo());
@@ -358,7 +380,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		// P0 优化：从"2024231998****156X赵璇丽"剥出"赵璇丽"
 		assertEquals("赵璇丽", r.getPassengerName());
 		assertEquals("2024231998****156X", r.getIdNumber());
-		assertEquals("￥54.5元", r.getAmount());
+		assertEquals("¥54.5元", r.getAmount());
 		assertEquals(null, r.getAmountExcludingTax());
 		// P0 优化：E014470 7 位纯数字（OCR 把 0 误识别为 O，但 E/R/U 字头保留）
 		assertEquals("E014470", r.getTicketNo());
@@ -430,7 +452,7 @@ class TrainTicketParserTest extends ParserTestSupport {
 		// train4 OCR 漏识别姓名（"4114211992****4212" 后面没接姓名）
 		assertEquals(null, r.getPassengerName());
 		assertEquals("4114211992****4212", r.getIdNumber());
-		assertEquals("￥194.50元", r.getAmount());
+		assertEquals("¥194.50元", r.getAmount());
 		assertEquals(null, r.getAmountExcludingTax());
 		// P0 优化：票号"U028534"在票面顶部（独立框），是 E/R/U 前缀的合法票号
 		assertEquals("U028534", r.getTicketNo());

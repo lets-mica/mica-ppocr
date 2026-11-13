@@ -222,7 +222,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("＊＊＊", r.getItems().get(1).getTaxAmount());
 		// 合计
 		assertEquals("玖拾玖圆肆角贰分", r.getTotalAmountUpper());
-		assertEquals("￥99.42", r.getTotalAmountLower());
+		assertEquals("¥99.42", r.getTotalAmountLower());
 		// 底栏
 		assertEquals("示例收款人", r.getPayee());
 		assertEquals("示例复核人", r.getReviewer());
@@ -273,7 +273,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("5660.38", item.getTaxAmount());
 		// 合计
 		assertEquals("壹拾万圆整", r.getTotalAmountUpper());
-		assertEquals("￥100000.00", r.getTotalAmountLower());
+		assertEquals("¥100000.00", r.getTotalAmountLower());
 		// 底栏
 		assertEquals("徐蓉", r.getPayee());
 		assertEquals("沈园园", r.getReviewer());
@@ -309,7 +309,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("85.81", item.getTaxAmount());
 		// 合计
 		assertEquals("壹仟伍佰壹拾陆圆整", r.getTotalAmountUpper());
-		assertEquals("￥1516.00", r.getTotalAmountLower());
+		assertEquals("¥1516.00", r.getTotalAmountLower());
 		// 底栏
 		assertEquals("前台", r.getPayee());
 		assertEquals("肖展", r.getReviewer());
@@ -344,7 +344,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("22.64", item.getTaxAmount());
 		// 合计
 		assertEquals("肆佰圆整", r.getTotalAmountUpper());
-		assertEquals("￥400.00", r.getTotalAmountLower());
+		assertEquals("¥400.00", r.getTotalAmountLower());
 		// 底栏
 		assertEquals("高梦雅", r.getPayee());
 		assertEquals("梁笑", r.getReviewer());
@@ -380,7 +380,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("347.12", item.getTaxAmount());
 		// 合计
 		assertEquals("陆仟壹佰叁拾贰圆伍角整", r.getTotalAmountUpper());
-		assertEquals("￥6132.50", r.getTotalAmountLower());
+		assertEquals("¥6132.50", r.getTotalAmountLower());
 		// 底栏
 		assertNull(r.getPayee());
 		assertEquals("马学琦", r.getReviewer());
@@ -416,7 +416,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("151.49", item.getTaxAmount());
 		// 合计
 		assertEquals("贰仟陆佰柒拾陆圆贰角肆分", r.getTotalAmountUpper());
-		assertEquals("￥2676.24", r.getTotalAmountLower());
+		assertEquals("¥2676.24", r.getTotalAmountLower());
 		// 底栏
 		assertEquals("李平", r.getPayee());
 		assertEquals("李平", r.getReviewer());
@@ -431,7 +431,7 @@ class InvoiceParserTest extends ParserTestSupport {
 	 * <p>修法：以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元
 	 * 即判定 OCR 误识，用反推值覆盖（与电子发票解析器同款兜底）。
 	 *
-	 * <p>本例：价税合计应为 ￥400.00（不含税金额 ￥377.36 + 税额 ￥22.64），
+	 * <p>本例：价税合计应为 ¥400.00（不含税金额 ¥377.36 + 税额 ¥22.64），
 	 * 不能被兜底取成不含税金额 ￥377.36。
 	 */
 	@Test
@@ -446,7 +446,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		);
 		InvoiceResult r = parse(PARSER, results);
 		assertEquals("肆佰圆整", r.getTotalAmountUpper());
-		assertEquals("￥400.00", r.getTotalAmountLower());
+		assertEquals("¥400.00", r.getTotalAmountLower());
 	}
 
 	/**
@@ -461,7 +461,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		);
 		InvoiceResult r = parse(PARSER, results);
 		assertEquals("肆佰圆整", r.getTotalAmountUpper());
-		assertEquals("￥400.00", r.getTotalAmountLower());
+		assertEquals("¥400.00", r.getTotalAmountLower());
 	}
 
 	// ========================================================================
@@ -800,7 +800,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("关济民", r.getReviewer());
 		assertEquals("任秋颖", r.getIssuer());
 		assertEquals("玖拾柒元叁角叁分", r.getTotalAmountUpper());
-		assertEquals("￥97.33", r.getTotalAmountLower());
+		assertEquals("¥97.33", r.getTotalAmountLower());
 		assertNotNull(r.getItems());
 		assertEquals(1, r.getItems().size());
 		InvoiceItem it = r.getItems().get(0);
@@ -860,7 +860,7 @@ class InvoiceParserTest extends ParserTestSupport {
 		assertEquals("关济民", r.getReviewer());
 		assertEquals("任秋颖", r.getIssuer());
 		assertEquals("玖拾柒元叁角叁分", r.getTotalAmountUpper());
-		assertEquals("￥97.33", r.getTotalAmountLower());
+		assertEquals("¥97.33", r.getTotalAmountLower());
 		assertNotNull(r.getItems());
 		assertEquals(1, r.getItems().size());
 		InvoiceItem it = r.getItems().get(0);

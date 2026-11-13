@@ -93,11 +93,11 @@ public class TrainTicketResult extends BaseStructuredResult {
 	// ========================================================================
 
 	/**
-	 * 车票金额（格式 ￥26.00元）
+	 * 车票金额（格式 ¥26.00元，货币符号统一为半角 ¥）
 	 */
 	private String amount;
 	/**
-	 * 不含税金额
+	 * 不含税金额（格式 ¥23.01元，货币符号统一为半角 ¥）
 	 */
 	private String amountExcludingTax;
 

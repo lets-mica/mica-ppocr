@@ -21,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher.LabeledMatch;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.MoneyUtil;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -458,7 +459,7 @@ public class ElectronicInvoiceParser {
 			if (text.contains("（小写）") || text.contains("(小写)")) {
 				Matcher m = LOWER_MONEY_PATTERN.matcher(text);
 				if (m.find()) {
-					String lower = normalizeMoneyPrefix(m.group());
+					String lower = MoneyUtil.normalizeYuanPrefix(m.group());
 					r.setTotalAmountLower(lower);
 					LabelMatcher.applyFieldBox(r, "totalAmountLower", LabeledMatch.of(lower, box));
 					lowerFound = true;
@@ -473,7 +474,7 @@ public class ElectronicInvoiceParser {
 			if (lowerValue != null) {
 				Matcher m = LOWER_MONEY_PATTERN.matcher(lowerValue.text());
 				if (m.find()) {
-					String lower = normalizeMoneyPrefix(m.group());
+					String lower = MoneyUtil.normalizeYuanPrefix(m.group());
 					r.setTotalAmountLower(lower);
 					LabelMatcher.applyFieldBox(r, "totalAmountLower",
 						LabeledMatch.of(lower, lowerValue));
@@ -493,9 +494,8 @@ public class ElectronicInvoiceParser {
 				long yuanB = yuanOf(r.getTotalAmountLower());
 				if (yuanA >= 0 && yuanB >= 0 && Math.abs(yuanA - yuanB) >= 1) {
 					// 大写反推值与 OCR 小写差异 ≥ 1 元 → OCR 通道丢万位等严重误识，
-					// 用反推值覆盖，并保留原小写的 ¥/￥ 前缀与文本层格式对齐
-					String prefix = yuanPrefix(r.getTotalAmountLower());
-					String replaced = prefix + lowerFromUpper;
+					// 用反推值覆盖；货币符号统一用半角 ¥（见 MoneyUtil）
+					String replaced = MoneyUtil.YUAN + lowerFromUpper;
 					r.setTotalAmountLower(replaced);
 					// 注：原 box 已通过 setTotalAmountLower 上面的 applyFieldBox 登记过，
 					// 这里仅覆盖 value，不再重复绑定新 box（避免覆盖原 OCR 坐标）
@@ -520,18 +520,6 @@ public class ElectronicInvoiceParser {
 		} catch (NumberFormatException e) {
 			return -1;
 		}
-	}
-
-	/**
-	 * 从小写金额中提取货币符前缀（¥/￥/?），无前缀返回空串。
-	 */
-	private static String yuanPrefix(String lower) {
-		if (lower == null || lower.isEmpty()) return "¥";
-		char first = lower.charAt(0);
-		if (first == '¥' || first == '￥' || first == '?') {
-			return "¥";
-		}
-		return "¥";
 	}
 
 	/**
@@ -589,18 +577,6 @@ public class ElectronicInvoiceParser {
 			return m.group();
 		}
 		return null;
-	}
-
-	/**
-	 * 归一化金额前缀：OCR 误识 ¥ 为 ? 时还原为 ¥。
-	 */
-	private static String normalizeMoneyPrefix(String money) {
-		if (money == null || money.isEmpty()) return money;
-		char first = money.charAt(0);
-		if (first == '?') {
-			return "¥" + money.substring(1).trim();
-		}
-		return money.trim();
 	}
 
 	// ========================================================================

@@ -23,6 +23,7 @@ import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher.LabeledMatch;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.MoneyUtil;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -802,6 +803,10 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 
 	/**
 	 * 金额：标签定位 + 关键字兜底。
+	 *
+	 * <p>货币符号统一归一成半角 {@code ¥}（见 {@link MoneyUtil}）—— 票面有全角
+	 * {@code ￥}（老版蓝票）与半角 {@code ¥}（新版电子票）两种字形，OCR 忠实照抄，
+	 * 下游不必再两个都判。
 	 */
 	private static LabeledMatch parseAmount(List<PPOcrV6Result> results, String primaryLabel) {
 		// 1) 主标签 + 合并框剥值
@@ -810,14 +815,14 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 			if (m.hasValue()) {
 				Matcher regex = AMOUNT_PATTERN.matcher(m.value());
 				if (regex.find()) {
-					return LabeledMatch.of(regex.group(), m.matches());
+					return LabeledMatch.of(MoneyUtil.normalizeYuanPrefix(regex.group()), m.matches());
 				}
 			}
 		}
 		// 2) 兜底：扫所有框
 		return LabelMatcher.matchSubstringWithBox(results, text -> {
 			Matcher regex = AMOUNT_PATTERN.matcher(text);
-			return regex.find() ? regex.group() : null;
+			return regex.find() ? MoneyUtil.normalizeYuanPrefix(regex.group()) : null;
 		});
 	}
 
@@ -827,6 +832,8 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 
 	/**
 	 * 不含税金额：标签 "不含税金额" / "税前金额"。
+	 *
+	 * <p>货币符号同样归一成半角 {@code ¥}（见 {@link MoneyUtil}）。
 	 */
 	private static LabeledMatch parseAmountExcludingTax(List<PPOcrV6Result> results) {
 		for (String label : CollUtil.listOf("不含税金额", "税前金额")) {
@@ -834,7 +841,7 @@ public class TrainTicketParser extends BaseStructuredParser<TrainTicketResult> {
 			if (m.hasValue()) {
 				Matcher regex = AMOUNT_PATTERN.matcher(m.value());
 				if (regex.find()) {
-					return LabeledMatch.of(regex.group(), m.matches());
+					return LabeledMatch.of(MoneyUtil.normalizeYuanPrefix(regex.group()), m.matches());
 				}
 			}
 		}

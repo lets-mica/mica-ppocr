@@ -19,6 +19,7 @@ package net.dreamlu.mica.ai.ppocr.structured.parser.invoice;
 import net.dreamlu.mica.ai.ppocr.config.PPOcrV6Config;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseTest;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 import org.opencv.core.Mat;
 import org.opencv.imgcodecs.Imgcodecs;
@@ -48,6 +49,7 @@ public class InvoiceDumpMain {
 	};
 
 	public static void main(String[] args) throws IOException {
+		BaseTest.useUtf8Console();
 		Path outDir = Paths.get("mica-ppocr-structured/src/test/resources/ocr-json/invoice");
 		Files.createDirectories(outDir);
 		System.out.println("OCR JSON 输出目录: " + outDir.toAbsolutePath());

@@ -103,7 +103,7 @@ public class InvoiceResult extends BaseStructuredResult {
 	 */
 	private String totalAmountUpper;
 	/**
-	 * 价税合计（小写）
+	 * 价税合计（小写）—— 货币符号统一为半角 ¥（如 ¥59976.00）
 	 */
 	private String totalAmountLower;
 

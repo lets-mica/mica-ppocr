@@ -49,6 +49,7 @@ public class TaxiDumpMain extends BaseTest<TaxiReceiptParser, TaxiReceiptResult>
 	};
 
 	public static void main(String[] args) throws IOException {
+		useUtf8Console();
 		Path outDir = Paths.get("mica-ppocr-structured/src/test/resources/ocr-json/taxi");
 		Files.createDirectories(outDir);
 		System.out.println("OCR JSON 输出目录: " + outDir.toAbsolutePath());

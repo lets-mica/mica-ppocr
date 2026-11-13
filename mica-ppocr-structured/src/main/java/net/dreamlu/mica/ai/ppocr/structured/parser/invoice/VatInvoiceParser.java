@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher.LabeledMatch;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.MoneyUtil;
 import net.dreamlu.mica.ai.ppocr.utils.CollUtil;
 
 import java.util.ArrayList;
@@ -1094,7 +1095,7 @@ private static final List<InvoiceTableParser.ColumnSpec> VAT_COLUMNS = CollUtil.
 
 		// 小写：找 (小写) 标签后的 ¥ 金额
 		LabeledMatch lowerMatch = parseTotalLower(results);
-		r.setTotalAmountLower(lowerMatch.value());
+		r.setTotalAmountLower(MoneyUtil.normalizeYuanPrefix(lowerMatch.value()));
 		LabelMatcher.applyFieldBox(r, "totalAmountLower", lowerMatch);
 
 		// 兜底校验：中文大写金额是结构化表达，OCR 几乎无误识，因此以大写反推的小写为基准
@@ -1112,9 +1113,8 @@ private static final List<InvoiceTableParser.ColumnSpec> VAT_COLUMNS = CollUtil.
 				long yuanB = yuanOf(r.getTotalAmountLower());
 				if (yuanA >= 0 && yuanB >= 0 && Math.abs(yuanA - yuanB) >= 1) {
 					// 大写反推值与 OCR 小写差异 ≥ 1 元 → OCR 通道误识，
-					// 用反推值覆盖，并保留原小写的 ¥/￥ 前缀
-					String prefix = yuanPrefix(r.getTotalAmountLower());
-					r.setTotalAmountLower(prefix + lowerFromUpper);
+					// 用反推值覆盖；货币符号统一用半角 ¥（见 MoneyUtil）
+					r.setTotalAmountLower(MoneyUtil.YUAN + lowerFromUpper);
 					// 注：原 box 已通过 setTotalAmountLower 上面的 applyFieldBox 登记过，
 					// 这里仅覆盖 value，不再重复绑定新 box（避免覆盖原 OCR 坐标）
 				}
@@ -1138,18 +1138,6 @@ private static final List<InvoiceTableParser.ColumnSpec> VAT_COLUMNS = CollUtil.
 		} catch (NumberFormatException e) {
 			return -1;
 		}
-	}
-
-	/**
-	 * 从小写金额中提取货币符前缀（¥/￥），无前缀返回默认的 ¥。
-	 */
-	private static String yuanPrefix(String lower) {
-		if (lower == null || lower.isEmpty()) return "¥";
-		char first = lower.charAt(0);
-		if (first == '¥' || first == '￥') {
-			return String.valueOf(first);
-		}
-		return "¥";
 	}
 
 	private void parseFooter(InvoiceResult r, List<PPOcrV6Result> results) {

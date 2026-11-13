@@ -22,6 +22,7 @@ import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.bankcard.BankCardResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.business.BusinessLicenseResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseTest;
 import net.dreamlu.mica.ai.ppocr.structured.parser.driver.DriverLicenseResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.household.HouseholdRegisterResult;
 import net.dreamlu.mica.ai.ppocr.structured.parser.idcard.IdCardResult;
@@ -130,6 +131,7 @@ public final class BatchOcrMain {
 	// ========================================================================
 
 	public static void main(String[] args) {
+		BaseTest.useUtf8Console();
 		ParserSpec spec = ParserSpec.of(PARSER_KEY);
 
 		// 解析目录 & 输出路径
