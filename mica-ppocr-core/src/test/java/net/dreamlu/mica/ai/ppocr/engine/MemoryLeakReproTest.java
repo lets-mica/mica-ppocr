@@ -151,9 +151,10 @@ class MemoryLeakReproTest {
 	 * 最大约 768 MB@48GB 机器；1 GB 封顶覆盖 64GB 机器的 1 GB 默认 Xms）；
 	 * 分配后释放引用并多次 GC，heap committed 由 GC 缩回 -Xms 稳态。
 	 *
-	 * <p><b>不再因「当前 committed 已达目标」而提前返回</b>：本方法跑在 Maven 的 JVM 内
-	 * （surefire forkCount=0），全量套件时前面的测试已把堆撑到 1 GB 以上，提前返回等于
-	 * 跳过稳定化，baseline 的堆状态随「套件里之前跑了什么」漂移，判据随之失真。
+	 * <p><b>不再因「当前 committed 已达目标」而提前返回</b>：跳过稳定化会让 baseline 的堆状态
+	 * 随「本 JVM 里之前跑了什么」漂移，判据随之失真 —— surefire 走 in-process（{@code forkCount=0}）时，
+	 * 全量套件里前面的测试已把堆撑到 1 GB 以上；走 fork 模式时，本模块的测试类仍共享同一个
+	 * surefire 专用 JVM（{@code reuseForks} 默认 true），水位同样随前面跑过什么而漂移。
 	 * 现在无论当前水位如何都执行「释放 + 多次 GC」，把堆压到同一低位，
 	 * 使 baseline 在单独跑与全量套件两种场景下同构。
 	 */

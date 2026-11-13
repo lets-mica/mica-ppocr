@@ -24,11 +24,12 @@ import java.util.List;
 /**
  * 独立 JVM 探针 —— 验证「{@link PPOcrV6Engine} 构造期完成 OpenCV 原生库加载」。
  *
- * <p><b>为什么必须独立 JVM</b>：本仓库 surefire 配了 {@code forkCount=0}，全部测试共享同一个 JVM。
- * 而其它测试在 {@code @BeforeAll} 里显式调 {@code OpenCV.loadLocally()}，
- * 一旦它们先跑，本 JVM 的 native 就已加载 ⇒ 「引擎是否自己加载」永远无法被观察到
- * （断言恒为真 = 没有牙齿）。
+ * <p><b>为什么必须独立 JVM</b>：其它测试在 {@code @BeforeAll} 里显式调
+ * {@code OpenCV.loadLocally()}，一旦它们先跑，同一 JVM 的 native 就已加载
+ * ⇒ 「引擎是否自己加载」永远无法被观察到（断言恒为真 = 没有牙齿）。
  * 只有在一个<b>全新 JVM</b> 里，才能确定性地验证「不手工 load 也能用」。
+ * <p>注意 surefire 的运行模式（in-process / fork）会变，子进程的 classpath 解析
+ * 不能依赖任何单一模式 —— 详见 {@link PPOcrV6EngineOpenCvLoadTest}。
  *
  * <p><b>探测原理</b>：调用一个<b>真正打到 native</b> 的方法 —— {@code Core.getVersionString()}
  * （内部是 {@code native getVersionString_0()}）。native 未加载时抛 {@link UnsatisfiedLinkError}。

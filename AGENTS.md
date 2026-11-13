@@ -563,6 +563,30 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 ⚠️ **竖排文本仍是文本层通道的盲区**：PDFBox 的「文本方向调整」会把竖排**摆正**成水平，
 坐标与渲染图对不上 —— 这类版式要靠 `forceOcr=true` 兜底（页面 `/Rotate` 则已正确处理，不再是盲区）。
 
+### OpenCV 加载探针测试：子 JVM 的 classpath 不能依赖 surefire 运行模式（改测试时必须保留）
+
+`PPOcrV6EngineOpenCvLoadTest` 要起一个**全新子 JVM** 验证「引擎构造期自己加载 OpenCV native」
+（同 JVM 里 native 已被别的测试加载 ⇒ 断言恒为真、没有牙齿）。子 JVM 的 `-cp` 得自己解析，
+而 **surefire 暴露 classpath 的方式随运行模式变化，没有一种是永远可用的**：
+
+- `forkCount=0`（in-process）：`java.class.path` 是 **Maven 自身**的 classpath（不含项目依赖），
+  真实 classpath 在测试类加载器（`IsolatedClassLoader`，继承 `URLClassLoader`）的 URL 列表里；
+- fork 模式：真实 classpath 要么由 surefire 以 `surefire.test.class.path` 属性注入，
+  要么被写进一个 **manifest-only jar**（`Class-Path` 属性，`file:/` 绝对 URI）的 manifest 里，
+  而进程里能看到的 `java.class.path` 只剩那个 jar 本身。
+
+⇒ 现实现是**多来源收候选 → 展开 manifest-only jar → 校验「能同时定位到探针类与引擎类」→ 取第一个可用**。
+
+⚠️ **两个别踩的坑**：
+- **只判「路径里含模块名」是不够的** —— 只含 `target/test-classes` 一个目录的 classpath 同样带模块名，
+  但子 JVM 找不到 `PPOcrV6Engine`；校验必须**真的去定位类**。
+- **别再退回「只取 `URLClassLoader` 的 URL，拿不到就抛异常」** —— 那正是 `forkCount` 改成 fork 模式后
+  Windows 上 `未能解析出可用的测试 classpath：...surefirebooter-xxx.jar` 的成因：那个 jar 是
+  manifest-only 空壳，直接拿去当 `-cp` 必然找不到类。
+
+回归护栏：`PPOcrV6EngineOpenCvLoadTest#manifestOnlyJarClasspath_expandsToRealEntries`
+（自造 manifest-only jar，断言展开后能定位到两个类）。
+
 ### mica-ppocr-structured
 
 - **`BaseStructuredParser<R>`** — SPI **抽象类**（v1.1.3 起由接口改为抽象类），规范所有解析器的入口签名
