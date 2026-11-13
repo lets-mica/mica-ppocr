@@ -1444,7 +1444,7 @@ public class LabelMatcher {
 	/**
 	 * 标签命中信息：命中框 + 命中的标签文本 + 命中方式。
 	 *
-	 * <p>{@link #matchedLabel()} 是"实际用于匹配的标签文本" —— 别名命中时是别名，
+	 * <p>{@code matchedLabel()} 是"实际用于匹配的标签文本" —— 别名命中时是别名，
 	 * 合并框剥值必须按它切，否则会把标签本身一起剥掉。
 	 */
 	@lombok.Value

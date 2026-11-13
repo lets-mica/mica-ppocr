@@ -29,7 +29,7 @@ import lombok.experimental.Accessors;
  * {@link #usable(int, double)}。
  *
  * <p>注意这是启发式判定：映射"错但合法"的乱码（落在 CJK 合法区）无法被字符级
- * 规则识别，极端场景可通过 {@link PdfOcrConfig#isForceOcr()} 强制走 OCR 通道。
+ * 规则识别，极端场景可通过 {@code PdfOcrConfig#isForceOcr()} 强制走 OCR 通道。
  */
 @Getter
 @ToString

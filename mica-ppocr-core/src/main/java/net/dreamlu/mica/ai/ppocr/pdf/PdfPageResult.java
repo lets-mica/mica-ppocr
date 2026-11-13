@@ -28,7 +28,7 @@ import java.util.List;
 /**
  * PDF 单页 OCR 结果：页码 + 该页文本框列表 + 实际走的通道。
  *
- * <p>{@link #results()} 与 {@code PPOcrV6Engine.run(...)} 的返回元素同构，
+ * <p>{@code results()} 与 {@code PPOcrV6Engine.run(...)} 的返回元素同构，
  * 可直接喂给 mica-ppocr-structured 的 {@code parseResults(List)} 复用
  * 现有结构化解析层（发票 / 行驶证 / 身份证等）。
  */

@@ -29,7 +29,7 @@ import java.util.Map;
 /**
  * 通用抽取结果。
  *
- * <p>字段值以 {@link #getValues()}（map，key 为 schema 里声明的字段名）承载，
+ * <p>字段值以 {@code getValues()}（map，key 为 schema 里声明的字段名）承载，
  * 不为每个字段生成一个固定属性 —— schema 是运行期决定的，属性没法预生成。
  *
  * <p>继承 {@link BaseStructuredResult}，获得：
@@ -93,7 +93,7 @@ public class OcrStructuredResult extends BaseStructuredResult {
 	/**
 	 * 是否所有字段都可信（无缺失、无违规、置信度达标）。
 	 *
-	 * <p>与 {@link #isNeedsReview()} 的区别：本方法要求<b>一个字段都不缺</b>，
+	 * <p>与 {@code isNeedsReview()} 的区别：本方法要求<b>一个字段都不缺</b>，
 	 * 而 {@code needsReview} 只在"值不可信"时置位。
 	 *
 	 * @return true 表示所有字段都取到且可信

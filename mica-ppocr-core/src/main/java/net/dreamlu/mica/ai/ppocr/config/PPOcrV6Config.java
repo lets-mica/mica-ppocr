@@ -253,44 +253,144 @@ public final class PPOcrV6Config {
 	 * @author L.cm
 	 */
 	public interface Source {
+		/**
+		 * 检测模型路径。
+		 *
+		 * @return 检测模型文件路径
+		 */
 		String getDetModelPath();
 
+		/**
+		 * 识别模型路径。
+		 *
+		 * @return 识别模型文件路径
+		 */
 		String getRecModelPath();
 
+		/**
+		 * 识别字符字典路径。
+		 *
+		 * @return 字符字典文件路径
+		 */
 		String getRecCharDictPath();
 
+		/**
+		 * 检测限制边长。
+		 *
+		 * @return 限制边长（默认 64）
+		 */
 		int getDetLimitSideLen();
 
+		/**
+		 * 检测限制类型。
+		 *
+		 * @return {@code min}（约束短边）或 {@code max}（约束长边）
+		 */
 		String getDetLimitType();
 
+		/**
+		 * 检测最大边长限制。
+		 *
+		 * @return 最大边长（默认 1920）
+		 */
 		int getDetMaxSideLimit();
 
+		/**
+		 * DB 后处理二值化阈值。
+		 *
+		 * @return 二值化阈值（默认 0.3）
+		 */
 		float getDetThresh();
 
+		/**
+		 * DB 后处理 box 阈值。
+		 *
+		 * @return box 阈值（默认 0.6）
+		 */
 		float getDetBoxThresh();
 
+		/**
+		 * DB 后处理 unclip 比率。
+		 *
+		 * @return unclip 比率（默认 1.5）
+		 */
 		float getDetUnclipRatio();
 
+		/**
+		 * 识别输入图像形状。
+		 *
+		 * @return 形状数组 [C, H, W]（默认 {3, 48, 320}）
+		 */
 		int[] getRecImageShape();
 
+		/**
+		 * 识别批处理大小。
+		 *
+		 * @return 每批裁剪图数量（默认 6）
+		 */
 		int getRecBatchSize();
 
+		/**
+		 * 是否优先使用 GPU 加速。
+		 *
+		 * @return true 表示优先使用加速器
+		 */
 		boolean isPreferAccelerator();
 
+		/**
+		 * 是否启用文档方向分类。
+		 *
+		 * @return true 表示启用 doc_ori
+		 */
 		boolean isUseDocOrientationClassify();
 
+		/**
+		 * 文档方向分类模型路径。
+		 *
+		 * @return doc_ori 模型文件路径；未启用方向分类时为 null
+		 */
 		String getDocOrientationModelPath();
 
+		/**
+		 * 文档方向分类置信度阈值。
+		 *
+		 * @return 阈值（默认 0.4），低于此值视为 0°
+		 */
 		float getDocOrientationThresh();
 
+		/**
+		 * ONNX Runtime intra-op 线程数。
+		 *
+		 * @return 单次算子内部的并行线程数（默认 1）
+		 */
 		int getIntraOpNumThreads();
 
+		/**
+		 * ONNX Runtime inter-op 线程数。
+		 *
+		 * @return 图节点之间的并行线程数（默认 1）
+		 */
 		int getInterOpNumThreads();
 
+		/**
+		 * ONNX Runtime 执行模式。
+		 *
+		 * @return {@code SEQUENTIAL} 或 {@code PARALLEL}
+		 */
 		ExecutionMode getExecMode();
 
+		/**
+		 * 是否启用 ONNX Runtime CPU memory arena。
+		 *
+		 * @return true 表示启用 arena（默认关闭）
+		 */
 		boolean isEnableCpuMemArena();
 
+		/**
+		 * 是否启用 ONNX Runtime 内存模式优化。
+		 *
+		 * @return true 表示启用内存模式（默认关闭）
+		 */
 		boolean isEnableMemoryPattern();
 	}
 
@@ -298,7 +398,7 @@ public final class PPOcrV6Config {
 	 * 把 {@link Source} 配置源转换为 {@link PPOcrV6Config}。
 	 *
 	 * <p>约定：null 字段（如未配置的 docOrientationModelPath）会保留为 null，
-	 * 由 {@link PPOcrV6Engine} 构造器按 {@code useDocOrientationClassify} 决定是否必填。
+	 * 由 {@code PPOcrV6Engine} 构造器按 {@code useDocOrientationClassify} 决定是否必填。
 	 *
 	 * <p>⚠️ PDF 通道配置（{@link #pdfOcrConfig}）<b>不在 {@link Source} 白名单内</b> ——
 	 * {@code Source} 是对外公开的接口契约，新增方法会破坏既有第三方实现。

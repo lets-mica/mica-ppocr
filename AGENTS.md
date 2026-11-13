@@ -136,6 +136,30 @@ mvn package -Dmaven.compiler.release=8 # 按 Java 8 ct.sym 校验标准库调用
 
 Native libs (OpenCV, ONNX Runtime) are pulled by Maven for Windows/Linux/macOS — no manual install.
 
+## Javadoc 约定（发布时的 javadoc 校验）
+
+`release` profile 在 `package` 阶段跑 `maven-javadoc-plugin:jar`，**doclint 默认全开**：
+引用解析失败、HTML 标题层级、缺失注释都会以 `[ERROR]` 打进发布日志。
+本地自测：`mvn -Prelease -DskipTests package`
+（父 pom 的 `maven.javadoc.failOnError=false` ⇒ 报错**不会中断构建**，但日志整片飘红，
+javadoc jar 也可能是残缺的 —— 别把「BUILD SUCCESS」当成 javadoc 没问题）。
+
+三条硬规则（都是踩过的坑）：
+
+1. **`{@link}` 不能指向 Lombok 生成的方法** —— Lombok 在注解处理阶段改 AST，
+   javadoc 的引用解析看不到这些方法 ⇒ `reference not found`。
+   手写方法可链接（`{@link #run(Path)}`），字段也可链接（含 private 字段），
+   只有 Lombok 访问器（`@Getter` / `@Value` / `@Data` 生成的）不行
+   ⇒ 一律写 `{@code getterName()}`。
+2. **`{@link}` 不能指向未 import 的跨包类，也不能指向 private 嵌套类**
+   （如引擎内的 `PdfRuntimeHolder`）⇒ 用全限定名或改成 `{@code}`。
+3. **HTML 标题从 `<h2>` 起** —— class 注释的隐含前序标题是 H1，
+   `<h3>` 会报 `heading used out of sequence`。
+
+另外，**公开接口的方法都要有 javadoc**（doclint `missing` 组会对每个无注释的 public 方法
+打 `no comment` 警告）：`PPOcrV6Config.Source` / `PdfOcrConfig.Source` 两个接口是重灾区，
+改这两个接口时记得同步补注释。
+
 ## Model setup
 
 模型**已随仓库入库**（`models/ppocr-v6/`），clone 后无需额外下载即可运行：

@@ -19,7 +19,7 @@ package net.dreamlu.mica.ai.ppocr.structured.parser.invoice;
 /**
  * 发票版型。
  *
- * <p>由 {@link InvoiceParser}（分发器）在解析完成后标注到 {@link InvoiceResult#getVersion()}；
+ * <p>由 {@link InvoiceParser}（分发器）在解析完成后标注到 {@code InvoiceResult#getVersion()}；
  * 直接调用 {@link VatInvoiceParser} / {@link ElectronicInvoiceParser} 时该字段保持 null。
  */
 public enum InvoiceVersion {

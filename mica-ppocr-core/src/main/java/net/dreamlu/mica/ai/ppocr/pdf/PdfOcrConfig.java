@@ -88,12 +88,32 @@ public class PdfOcrConfig {
 	 * @author L.cm
 	 */
 	public interface Source {
+		/**
+		 * 渲染通道输出 DPI。
+		 *
+		 * @return 渲染 DPI（默认 200，发票 / 证件类建议 200~300）
+		 */
 		int getRenderDpi();
 
+		/**
+		 * 文本层可用最小非空白字符数。
+		 *
+		 * @return 最小字符数（默认 20，低于视为无文本层）
+		 */
 		int getMinTextChars();
 
+		/**
+		 * 文本层可读字符占比下限。
+		 *
+		 * @return 可读占比（默认 0.90）
+		 */
 		double getMinReadableRatio();
 
+		/**
+		 * 是否强制所有页面走"渲染 + OCR"通道。
+		 *
+		 * @return true 表示强制 OCR（默认 false）
+		 */
 		boolean isForceOcr();
 	}
 

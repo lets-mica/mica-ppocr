@@ -532,7 +532,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 * <ul>
 	 *   <li><b>未超时</b>：持生命周期<b>写锁</b>释放全部 native 会话。
 	 *       「释放 native 句柄」永远不会与在途推理重叠。</li>
-	 *   <li><b>已超时</b>：引擎立即「退役」—— {@link #isClosed()} 变为 true、新请求被拒，
+	 *   <li><b>已超时</b>：引擎立即「退役」—— {@code isClosed()} 变为 true、新请求被拒，
 	 *       但<b>不释放</b> native 会话（在途推理还在用它，强行释放就是 use-after-free），
 	 *       释放动作延后到在途推理结束后由守护线程完成。
 	 *       ⇒ 关停不会被长耗时推理（多页 PDF OCR）拖住。</li>
@@ -1336,7 +1336,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 *
 	 * @param imgBgr BGR 格式图像 (H, W, 3) uint8
 	 * @return 识别结果列表（按阅读顺序排列）；
-	 * 启用 doc_ori 时每个 {@link PPOcrV6Result#rotatedDegrees()} 记录
+	 * 启用 doc_ori 时每个 {@code PPOcrV6Result#rotatedDegrees()} 记录
 	 * doc_ori 应用到原图的顺时针旋转角度（0/90/180/270）
 	 */
 	public List<PPOcrV6Result> runMat(Mat imgBgr) {
@@ -1358,7 +1358,7 @@ public final class PPOcrV6Engine implements Closeable {
 	 * @param imgBgr    BGR 格式图像 (H, W, 3) uint8
 	 * @param detParams DB 参数；{@code null} 表示使用引擎默认
 	 * @return 识别结果列表（按阅读顺序排列）；
-	 * 启用 doc_ori 时每个 {@link PPOcrV6Result#rotatedDegrees()} 记录
+	 * 启用 doc_ori 时每个 {@code PPOcrV6Result#rotatedDegrees()} 记录
 	 * doc_ori 应用到原图的顺时针旋转角度（0/90/180/270）
 	 */
 	public List<PPOcrV6Result> runMat(Mat imgBgr, DbDetParams detParams) {

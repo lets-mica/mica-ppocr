@@ -13,6 +13,7 @@
 - fix(structured): `fieldBoxes` 不再登记「有框无值」的字段 —— 值没识别出来时不再留下高亮框，调用方按 key 取值不会再拿到 null 却看到框。
 - fix(structured): 通用解析器的日期归一化不再把长数字串修成假日期 —— 18 位身份证号以前会被修成 `1101-05-19` 这种恰好合法的日期，还能通过形态校验拿到满置信度；现只有「恰好 8 位数字」或「含日期分隔符」的文本才进修复流程。⚠️ 行为变更：长数字串不再被改写成日期。
 - fix(build): `mica-ppocr-core` 的 `slf4j-api` 改为 `provided` scope —— 此前所有下游被强塞 slf4j-api 2.0.20，与 Spring Boot 2.7 的 logback-classic 不兼容，可能出现「No SLF4J providers were found」而全站日志哑掉。⚠️ 行为变更：单独引入 `mica-ppocr-core`（不经 starter / plugin）的项目需自行引入 `org.slf4j:slf4j-api`。
+- fix(build): 发布时的 javadoc 报错全部清零 —— 失效的类 / 方法引用与缺失的接口注释已修复，四个模块的 javadoc jar 现在零 error、零 warning 生成，发布日志不再整片飘红。
 - fix(repo): `.gitignore` 的 medium 档模型豁免规则移到 `*.zip` 之后 —— 新增或重新添加模型 zip 不再被静默忽略。
 - fix(test): OpenCV 加载回归测试的 classpath 解析不再依赖 surefire 的运行模式 —— surefire 移除 `forkCount=0`（测试改为 fork 模式）后，测试进程里能看到的 classpath 可能只剩一个「只有 manifest 的 jar」，子进程因而找不到探针类。现改为多来源收集候选、展开 manifest-only jar 后再校验（须能同时定位到探针类与引擎类），fork 与 in-process 两种模式均可用。回归测试见 `PPOcrV6EngineOpenCvLoadTest`。
 - perf(core): 检测最大边长限制默认 4000 → 1920 —— 2K~4K 图的检测耗时大幅下降（行驶证 1638 → 951 ms、发票 1495 → 1223 ms、PDF 通道 1374 → 1149 ms）。⚠️ **行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器比对中无字段变为 null，6 个字段有单字抖动；`detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景需自行调大。

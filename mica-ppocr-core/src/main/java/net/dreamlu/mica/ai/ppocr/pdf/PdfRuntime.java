@@ -42,7 +42,7 @@ import java.util.List;
  * 若引擎的字节码里出现 {@code Loader} / {@code PDDocument} / {@code PDFRenderer}，
  * 类链接阶段的字节码校验就可能连带触发 PDFBox 类的加载 ——
  * 缺依赖时连「构造一个只跑图片的引擎」都会失败。
- * 因此引擎侧只通过 {@link PdfRuntimeHolder}（延迟到真正要用时才链接）间接调用本类。
+ * 因此引擎侧只通过 {@code PdfRuntimeHolder}（延迟到真正要用时才链接）间接调用本类。
  *
  * <p><b>调用前提</b>：{@link PdfDependency#isAvailable()} 必须为 {@code true}。
  *

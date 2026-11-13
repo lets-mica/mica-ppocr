@@ -38,7 +38,7 @@ import java.util.List;
  * 无需任何适配即可复用；针对 OCR 噪声的容错逻辑（残缺标签模糊匹配、合并框
  * 处理等）在文本层输入下自然退化为不触发。
  *
- * <h3>坐标语义</h3>
+ * <h2>坐标语义</h2>
  * 基于 {@link TextPosition#getXDirAdj()} / {@link TextPosition#getYDirAdj()}：
  * <strong>裁剪框内的 point 坐标</strong>（1 point = 1/72 英寸，左上原点、y 向下增长）。
  * <ul>
@@ -53,12 +53,12 @@ import java.util.List;
  * 文本块（如票面的"发票号码: xxx"与"开票日期: xxx"）拆分为独立结果，
  * 与 DB 检测按视觉连通域切框的行为一致，保证下游结构化解析零适配。
  *
- * <h3>适用边界</h3>
+ * <h2>适用边界</h2>
  * 文本层坐标对<b>横排</b>文本可靠（发票 / 票据 / 报表场景全覆盖），
  * 页面 {@code /Rotate} 亦已正确处理。
  * <b>竖排文本</b>（文本矩阵方向非水平）仍是本通道的盲区 ——
  * PDFBox 的「文本方向调整」会把竖排摆正成水平，坐标与渲染图对不上，
- * 这类版式应通过 {@link PdfOcrConfig#isForceOcr()} 强制走渲染 + OCR 通道。
+ * 这类版式应通过 {@code PdfOcrConfig#isForceOcr()} 强制走渲染 + OCR 通道。
  *
  * <p>无状态，可单例共享。
  */
