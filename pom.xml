@@ -167,7 +167,6 @@
                 <version>3.6.1</version>
                 <configuration>
                     <argLine>-Djdk.net.URLClassPath.disableClassPathURLCheck=true -Xshare:off</argLine>
-                    <forkCount>0</forkCount>
                 </configuration>
             </plugin>
             <plugin>
