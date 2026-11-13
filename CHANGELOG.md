@@ -2,15 +2,16 @@
 
 ## 发行版本
 
-### v1.2.6 - 未发布
-- refactor(core): PDF 依赖改为可选 —— `pdfbox` 在 `mica-ppocr-core` 中标记为 optional，不再向下游（structured / starter / plugin）传递，只做图片 OCR 的项目不再被动背上 pdfbox + fontbox 那套依赖。⚠️ **行为变更**：需要处理 PDF 输入的项目要显式引入 `org.apache.pdfbox:pdfbox:3.0.8`（PDF 双通道本身的行为不变）；未引入时 `run(byte[])` 收到 PDF 输入抛 `IllegalStateException` 并在消息里指明要补的依赖，不再暴露 `NoClassDefFoundError`，图片输入完全不受影响。
+### v1.2.6 - 2026-11-13
 - perf(core): DB 后处理的二值化改为一次 Java 遍历直出 0/255 掩码 —— 原先走 OpenCV 的 `threshold` → `Core.multiply(255)` → `convertTo(CV_8U)` 三趟链，每次 OCR 要在 native 侧过两遍 CV_32F 中间结果（约 21 MB）。DB 后处理耗时 10.2 → 6.8 ms（-33%），每次 OCR 的 native 分配/释放量降到约 2.7 MB。**框坐标与识别文本逐位不变**（二值化掩码与 OpenCV 三趟链逐位对比，含「恰好等于阈值」的边界点），回归测试见 `DbPostProcessorTest`。
 - perf(core): det / rec 预处理的归一化改为按字节值预计算查表 —— uint8 像素值只有 256 种，原先内层循环每个像素要做 3 次浮点除法，现改为 256 项查表直接取值。det 预处理耗时 20.5 → 19.4 ms。**归一化张量逐位不变**（查表用与原表达式完全相同的运算顺序求值，换成乘以倒数会让末位漂移），由三个预处理器的 bit-exact 回归测试锁定。
 - perf(core): 检测最大边长限制默认 4000 → 1920 —— `detLimitType=min` + `detLimitSideLen=64` 下这是唯一的缩放闸门，此前对 2K~4K 图几乎不生效（行驶证 2988×2199 的检测输入是 2208×2976、共 657 万像素），而检测推理占整条链路的 74%。检测耗时随之下降：行驶证 1638 → 951 ms（1.72×）、发票 1495 → 1223 ms（1.22×）、PDF 通道（forceOcr，A4@200dpi）1374 → 1149 ms（1.20×）。**行为变更**：默认检测分辨率下调，44 张样图 × 10 个解析器的字段级比对中无任何字段变为 null，6 个业务字段有单字抖动（4 变差、2 变好）；用 `detLimitType=max` 且 `detLimitSideLen` 大于 1920 的场景会被本值二次截断，需自行调大。
-- fix(structured): 老版增值税发票的「价税合计（小写）」被误取成不含税金额 —— 「(小写)」框里的 ¥ 符号被 OCR 认成汉字时，小写金额取不到标签内提取，只能靠位置锚定兜底，而兜底会命中读序更靠前的明细表「金额」列（不含税金额）。现以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元即用反推值覆盖 —— 电子发票解析器本就有此兜底，老版增值税这条链路此前缺失。回归测试见 `InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`。
 - perf(core): ONNX Runtime 输出张量改为零拷贝读取 —— det 与 rec 的输出数据原先都会被整块再拷贝一次（rec 每批 6.9 MB、det 在原图分辨率下可达 26 MB），现直接从张量底层数组取用，省掉这部分拷贝与分配。**每次 OCR 的堆分配降 32%~40%、峰值存活堆降 26%~46%**，端到端耗时降 1%~2%。**识别文本与置信度逐位不变**（42 张样图的端到端快照零差异），回归测试见 `PPOcrV6EngineTensorAccessTest`。
-- perf(structured): 结构化解析层的正则全部预编译 —— 原先 `String#matches` / `String#replaceAll` 写在「标签 × 候选框」的扫描路径上逐框调用，每次都重新编译同一份正则；现提为类常量 `Pattern`，单次调用快 5.4×（matches）/ 2.1×（replaceAll），解析耗时降 ~22%、每次解析的堆分配降 60%~68%（发票 0.311 → 0.239 ms/次）。**解析结果逐字不变**（10 个解析器 × 全部样图的 562 行字段快照零差异）。
+- refactor(core): PDF 依赖改为可选 —— `pdfbox` 在 `mica-ppocr-core` 中标记为 optional，不再向下游（structured / starter / plugin）传递，只做图片 OCR 的项目不再被动背上 pdfbox + fontbox 那套依赖。⚠️ **行为变更**：需要处理 PDF 输入的项目要显式引入 `org.apache.pdfbox:pdfbox:3.0.8`（PDF 双通道本身的行为不变）；未引入时 `run(byte[])` 收到 PDF 输入抛 `IllegalStateException` 并在消息里指明要补的依赖，不再暴露 `NoClassDefFoundError`，图片输入完全不受影响。
 - refactor(core): 移除 JTS 依赖 —— 多边形偏移（unclip）原先走 JTS `BufferOp` + `JOIN_ROUND`，现改为等价的纯 Java 实现（每边沿外法向平移 + 顶点圆弧连接），运行时不再有第三方几何库依赖。**unclip 单次调用 5.34 → 1.63 μs、每次堆分配 12.7 KB → 2.7 KB**（JTS 的 `BufferOp` 每次调用都要走一遍 noding 拓扑流程，为一个 4 顶点的矩形分配 12.7 KB）。**检测框坐标与识别文本逐位不变**（53 张样图 × 1672 条 OCR 快照零差异），回归测试见 `OffsetTest`。端到端影响在耗时波动内（53 张样图整链路 36.1 s → 36.0 s，轮内波动本身就有 ±1%）。
+- perf(structured): 结构化解析层的正则全部预编译 —— 原先 `String#matches` / `String#replaceAll` 写在「标签 × 候选框」的扫描路径上逐框调用，每次都重新编译同一份正则；现提为类常量 `Pattern`，单次调用快 5.4×（matches）/ 2.1×（replaceAll），解析耗时降 ~22%、每次解析的堆分配降 60%~68%（发票 0.311 → 0.239 ms/次）。**解析结果逐字不变**（10 个解析器 × 全部样图的 562 行字段快照零差异）。
+- perf(structured): 优化 `LabelMatcher` 日志，字段级探测日志由 `warn` 调成 `debug`，减少不必要的日志输出。
+- fix(structured): 老版增值税发票的「价税合计（小写）」被误取成不含税金额 —— 「(小写)」框里的 ¥ 符号被 OCR 认成汉字时，小写金额取不到标签内提取，只能靠位置锚定兜底，而兜底会命中读序更靠前的明细表「金额」列（不含税金额）。现以中文大写金额反推的小写为基准校验 OCR 小写值，整数部分差异 ≥ 1 元即用反推值覆盖 —— 电子发票解析器本就有此兜底，老版增值税这条链路此前缺失。回归测试见 `InvoiceParserTest#parse_vat_totalLower_fallsBackToUpperCaseWhenYuanSymbolMisread`。
 
 ### v1.2.5 - 2026-11-01
 - feat(structured): 新增通用解析器（声明式 schema 入口）。`structured/parser/generic/` 提供 `OcrFieldSchema` / `OcrStructuredParser` / `OcrStructuredResult` / `FieldSpec` / `FieldRule` / `ValueNormalizer` / `ValueLocator` 共 7 个类，新增单据类型写一份 schema 即可抽取字段、无需再实现解析器类，与存量 10 个强类型 parser 并行存在；取值走「标签定位 → 合并框剥值 → 正则兜底」，校验位与字段置信度复用 `Validations` / `FieldConfidence`，Spring Boot / Solon `PPOcrTemplate` 同步新增 `generic(schema)`。
