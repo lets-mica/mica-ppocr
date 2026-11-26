@@ -2,6 +2,9 @@
 
 ## 发行版本
 
+### 未发布
+- feat(structured): 身份证日期字段默认去除 OCR 空格并支持自定义输出格式 —— `IdCardParser` 新增 `(engine, dateFormat)` 构造（仅编程设置，`DateTimeFormatter` pattern，非法或含时间字段的 pattern 构造期即报错），配置后出生日期与有效期限起止统一转换为该格式（`长期` 原样保留、修不出的日期保留去空格原值）。⚠️ 行为变更：`birthDate` / `validFrom` / `validTo` 默认始终去掉 OCR 随机空格（`1996 年 1 月 11 日` → `1996年1月11日`），格式族不变。回归测试见 `IdCardParserTest`。
+
 ### v1.2.6 - 2026-11-13
 - feat(structured): 身份证 / 驾驶证 / 银行卡补上 `fieldBoxes` 回填 —— 10 个内置解析器现已全部支持 `fieldBoxes`，字段可视化与高亮定位不必再自己按文本二次匹配。⚠️ 行为变更：这 3 个解析器的 `fieldBoxes` 由空 map 变为有内容。
 - fix(core): 检测框坐标不再被整数化 —— 框坐标与 Python 参考实现逐位对齐。⚠️ 行为变更：检测框坐标会变（约 98% 的框位移 ≤3px），按像素坐标做业务判断的下游需复核；裁剪边界随框位移而变 ⇒ 个别文本框的识别结果会有细微出入。回归测试见 `DbPostProcessorTest`。

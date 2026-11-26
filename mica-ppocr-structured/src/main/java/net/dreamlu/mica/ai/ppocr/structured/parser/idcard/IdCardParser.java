@@ -20,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Engine;
 import net.dreamlu.mica.ai.ppocr.engine.PPOcrV6Result;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.BaseStructuredParser;
+import net.dreamlu.mica.ai.ppocr.structured.parser.core.DateRepair;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldConfidence;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.FieldSource;
 import net.dreamlu.mica.ai.ppocr.structured.parser.core.LabelMatcher;
@@ -29,6 +30,7 @@ import net.dreamlu.mica.ai.ppocr.structured.parser.core.Validations;
 
 import java.time.DateTimeException;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -93,14 +95,59 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * 预编译后单次快约 2.1×（实测 184 ns → 86 ns），语义完全等价。
 	 */
 	private static final Pattern WHITESPACE_RUN_PATTERN = Pattern.compile("\\s+");
+	/**
+	 * 日期字段去空白：ASCII 空白 + 全角空格（U+3000，rec 词典含该 token，可出现在日期中间）。
+	 *
+	 * <p>Java 正则 {@code \s} <b>不含</b> U+3000，须显式补上 ——
+	 * 与 {@code HouseholdRegisterParser.WHITESPACE_OR_IDEO_PATTERN} 同款写法。
+	 */
+	private static final Pattern DATE_WHITESPACE_PATTERN = Pattern.compile("[\\s\\u3000]+");
 
 	/**
-	 * 构造身份证解析器，绑定推理引擎。
+	 * 日期输出格式化器；{@code null} 表示只去除 OCR 空格、保持原文格式族。
+	 *
+	 * <p>{@link DateTimeFormatter} 不可变且线程安全，bean 单例下可安全共享。
+	 */
+	private final DateTimeFormatter dateFormatter;
+
+	/**
+	 * 构造身份证解析器，绑定推理引擎（日期只去空格、保持原文格式）。
 	 *
 	 * @param engine PP-OCRv6 推理引擎；可为 null（仅在仅调用 {@link #parseResults(List)} 时）
 	 */
 	public IdCardParser(PPOcrV6Engine engine) {
+		this(engine, null);
+	}
+
+	/**
+	 * 构造身份证解析器，并指定日期字段的输出格式。
+	 *
+	 * <p>配置后 {@code birthDate} / {@code validFrom} / {@code validTo} 三个字段
+	 * 统一转换为该格式（如 {@code "yyyy-MM-dd"}）；{@code "长期"} 原样保留，
+	 * 修不出的日期保留去空格后的原值（绝不置空、绝不产出假日期）。
+	 *
+	 * <p><b>构造期 fail-fast</b>：非法 pattern（{@code DateTimeFormatter.ofPattern} 抛
+	 * {@link IllegalArgumentException}）与含时间字段的 pattern（如 {@code "yyyy-MM-dd HH:mm"}，
+	 * 无法用于 {@link LocalDate}）都在构造期报错，不留到运行期静默兜底。
+	 *
+	 * @param engine     PP-OCRv6 推理引擎；可为 null（仅在仅调用 {@link #parseResults(List)} 时）
+	 * @param dateFormat {@link DateTimeFormatter} pattern；{@code null} 表示只去空格、保持原文格式
+	 * @throws IllegalArgumentException pattern 非法或含时间字段时
+	 */
+	public IdCardParser(PPOcrV6Engine engine, String dateFormat) {
 		super(engine);
+		if (dateFormat == null) {
+			this.dateFormatter = null;
+			return;
+		}
+		DateTimeFormatter formatter = DateTimeFormatter.ofPattern(dateFormat);
+		try {
+			// 用 LocalDate 试排一次：含 HH/mm/ss 等时间字段的 pattern 在此暴露
+			formatter.format(LocalDate.of(2000, 1, 1));
+		} catch (DateTimeException e) {
+			throw new IllegalArgumentException("日期格式不能含时间字段: " + dateFormat, e);
+		}
+		this.dateFormatter = formatter;
 	}
 
 	/**
@@ -297,25 +344,62 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 	 * <p>取最靠左的 y 重叠框，与"出生"标签同行。
 	 * 若标签定位结果不可用，回退正则（4 位年 + 1~2 位月 + 1~2 位日）；
 	 * 仍不可用时，从身份证号推算（15 位 YY 默认按 19YY 补全，18 位 YYYY 直接取）。
+	 *
+	 * <p>三条路径的值统一经 {@link #normalizeDate(String)} 归一化（去 OCR 空格，
+	 * 配置了 {@code dateFormat} 时再转目标格式）—— 归一化必须在本方法内部完成，
+	 * 否则结果字段与字段置信度会拿到不一致的值。
 	 */
-	private static ParsedField parseBirthDate(List<PPOcrV6Result> results, String idNumber) {
+	private ParsedField parseBirthDate(List<PPOcrV6Result> results, String idNumber) {
 		// 支持"出生1966年11月2日"合并框识别
 		LabelMatcher.LabeledMatch labelValue = LabelMatcher.matchValueFromPrefixWithBox(results, "出生");
 		if (labelValue.hasValue()) {
 			// 出生日期格式较自由（"1966 年 11 月 2 日"），先信任标签定位结果
-			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL);
+			return LabelMatcher.toParsedField(labelValue, FieldSource.LABEL,
+				normalizeDate(labelValue.value()));
 		}
 		LabelMatcher.LabeledMatch pattern = LabelMatcher.matchPatternWithBox(results, BIRTH_DATE_PATTERN, false);
 		if (pattern.hasValue()) {
-			return LabelMatcher.toParsedField(pattern, FieldSource.PATTERN);
+			return LabelMatcher.toParsedField(pattern, FieldSource.PATTERN,
+				normalizeDate(pattern.value()));
 		}
 		// 兜底：身份证号推算（兼容 15 位/18 位 + OCR "出生" 标签整体残缺场景）
 		String fromId = birthDateFromIdNumber(idNumber);
 		if (fromId != null) {
-			log.debug("身份证解析：出生日期身份证号推算命中 \"{}\"", fromId);
-			return ParsedField.derived(fromId);
+			String normalized = normalizeDate(fromId);
+			log.debug("身份证解析：出生日期身份证号推算命中 \"{}\"", normalized);
+			return ParsedField.derived(normalized);
 		}
 		return ParsedField.missing();
+	}
+
+	/**
+	 * 日期字段归一化：先去除 OCR 随机空格，配置了 {@code dateFormat} 时再转目标格式。
+	 *
+	 * <p><b>绝不置空、绝不产出假日期</b>：不像日期（{@link DateRepair#looksLikeDate} 闸门）、
+	 * 修复失败（{@link DateRepair#repairDate} 返回 null）或格式化异常时，
+	 * 一律保留<b>去空格后的原值</b> —— 修不出就原样给出去，不猜。
+	 *
+	 * @param raw 原始日期文本，可为 null
+	 * @return 归一化后的值；入参为 null 时返回 null
+	 */
+	private String normalizeDate(String raw) {
+		if (raw == null) {
+			return null;
+		}
+		String s = DATE_WHITESPACE_PATTERN.matcher(raw).replaceAll("");
+		if (dateFormatter == null || !DateRepair.looksLikeDate(s)) {
+			return s;
+		}
+		String repaired = DateRepair.repairDate(s);
+		if (repaired == null) {
+			return s;
+		}
+		try {
+			return dateFormatter.format(LocalDate.parse(repaired));
+		} catch (DateTimeException e) {
+			// 防御：repairDate 已用 LocalDate.of 校验过，理论上到不了这里
+			return s;
+		}
 	}
 
 	/**
@@ -770,9 +854,19 @@ public class IdCardParser extends BaseStructuredParser<IdCardResult> {
 					to = "长期";
 				} else {
 					String[] parts = text.split("-");
-					from = parts[0];
-					to = parts.length > 1 ? parts[1] : parts[0];
+					if (parts.length == 0) {
+						// 既有 bug 兜底：text 为 "-"（或全为分隔符）时 split 返回长度 0 数组，
+						// 原实现 parts[0] 直接 AIOOBE —— 保留原值，不猜
+						from = text;
+						to = text;
+					} else {
+						from = parts[0];
+						to = parts.length > 1 ? parts[1] : parts[0];
+					}
 				}
+				// 归一化收口（去空格 + 可选格式）："长期"经闸门自然原样返回
+				from = normalizeDate(from);
+				to = normalizeDate(to);
 				r.setValidFrom(from);
 				r.setValidTo(to);
 				LabelMatcher.applyFieldBox(r, "validFrom", term);

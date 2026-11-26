@@ -60,7 +60,8 @@ public class IdCardResult extends BaseStructuredResult {
 	 */
 	private String nation;
 	/**
-	 * 出生日期（正面，"yyyy 年 MM 月 dd 日" 或 "yyyyMMdd"）
+	 * 出生日期（正面）：已去除 OCR 随机空格的原文格式（如 "1973年10月24日"）；
+	 * 构造 {@code IdCardParser} 时配置了 {@code dateFormat} 则为该格式（如 "1973-10-24"）。
 	 */
 	private String birthDate;
 	/**
@@ -76,11 +77,12 @@ public class IdCardResult extends BaseStructuredResult {
 	 */
 	private String issuingAuthority;
 	/**
-	 * 有效期限起始日期（反面）
+	 * 有效期限起始日期（反面）：已去除 OCR 空格的原文格式（如 "2020.01.01"），
+	 * 或 "长期"；配置了 {@code dateFormat} 时为该格式（如 "2020-01-01"）。
 	 */
 	private String validFrom;
 	/**
-	 * 有效期限截止日期（反面）
+	 * 有效期限截止日期（反面）：口径同 {@link #validFrom}。
 	 */
 	private String validTo;
 }

@@ -97,4 +97,26 @@ class DateRepairTest {
 		assertTrue(DateRepair.isRepairableDate("2015-0518"));
 		assertFalse(DateRepair.isRepairableDate("2015-13-18"));
 	}
+
+	@Test
+	void looksLikeDate_dateShapes_true() {
+		// 恰好 8 位纯数字
+		assertTrue(DateRepair.looksLikeDate("20150305"));
+		// 含日期分隔符（年/月/日 或 -/./）
+		assertTrue(DateRepair.looksLikeDate("2015年3月5日"));
+		assertTrue(DateRepair.looksLikeDate("2015-03-05"));
+		assertTrue(DateRepair.looksLikeDate("2015.03.05"));
+		assertTrue(DateRepair.looksLikeDate("2015/03/05"));
+	}
+
+	@Test
+	void looksLikeDate_nonDate_false() {
+		// 长数字串无分隔符：身份证号等，滑窗修出来的只会是假日期
+		assertFalse(DateRepair.looksLikeDate("11010519491231002X"));
+		assertFalse(DateRepair.looksLikeDate("2015"));
+		assertFalse(DateRepair.looksLikeDate("长期"));
+		assertFalse(DateRepair.looksLikeDate("abc"));
+		assertFalse(DateRepair.looksLikeDate(""));
+		assertFalse(DateRepair.looksLikeDate(null));
+	}
 }

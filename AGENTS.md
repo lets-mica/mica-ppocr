@@ -647,6 +647,10 @@ The pipeline flows: **detect → sort boxes → crop → recognize**.
 - **`DateRepair`**（`core/`）— 日期修复：把被 OCR 弄乱分隔符的日期还原成 `yyyy-MM-dd`。
   ⚠️ **"纯数字 8 位"必须排在"结构化切分"之前**：结构化路径会把 `2017-05-1.2` 切成 `2017-05-01`（丢掉 12 的 2），
   而纯数字路径给出正确的 `2017-05-12`。非法日期（月份 13、2 月 30 日）宁可不修。
+  前置形态闸门 `looksLikeDate`（恰 8 位数字 或 含 年/月/日/-/./）已上移为本类公开方法，
+  `ValueNormalizer.DATE` 与 `IdCardParser` 的日期归一化共用同一道闸门
+  （防滑窗把 18 位身份证号修成假日期）。`IdCardParser` 的 `birthDate` / `validFrom` / `validTo`
+  默认去除 OCR 空格，构造传入 `dateFormat` 时再统一转目标格式（修不出保留原值、`长期` 原样）。
 
 - **`BaseStructuredParser.detParams()`** — 解析器声明默认 DB 检测参数的钩子（默认 `null` = 引擎默认）。
   `parse(...)` 一站式方法会带上它；显式传入的 `DbDetParams` 优先，`null` 时回落到本钩子。
