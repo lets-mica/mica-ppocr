@@ -103,7 +103,7 @@ public enum ValueNormalizer {
 	 * <p>内部复用 {@link DateRepair}：无法修复（非法日期）时<b>原样返回</b>，
 	 * 不做"修成别的日期"的事 —— 宁可修不出，也不修错。
 	 *
-	 * <p><b>前置形态闸门</b>：只有"像日期"的文本才进修复流程（见 {@link #looksLikeDate}）。
+	 * <p><b>前置形态闸门</b>：只有"像日期"的文本才进修复流程（见 {@link DateRepair#looksLikeDate}）。
 	 * 没有这道闸门时，{@link DateRepair} 的滑窗路径（数字 &gt; 8 位时取前 8 位）
 	 * 会把 18 位身份证号 {@code "11010519491231002X"} 修成 {@code "1101-05-19"} ——
 	 * 合法但完全错误的日期；而归一化发生在校验之前，这个假日期还能通过
@@ -115,7 +115,7 @@ public enum ValueNormalizer {
 			if (value == null) {
 				return null;
 			}
-			if (!looksLikeDate(value)) {
+			if (!DateRepair.looksLikeDate(value)) {
 				return value;
 			}
 			String repaired = DateRepair.repairDate(value);
@@ -130,35 +130,4 @@ public enum ValueNormalizer {
 	 * @return 归一化后的值；入参为 null 时返回 null
 	 */
 	public abstract String apply(String value);
-
-	/**
-	 * 判定文本是否"像日期"，作为 {@link #DATE} 归一化的前置闸门。
-	 *
-	 * <p>判定口径（满足其一即可）：
-	 * <ul>
-	 *   <li>去掉非数字字符后<b>恰好 8 位</b>（纯数字日期，如 "20150305"）；</li>
-	 *   <li>原文含<b>日期分隔符</b>：{@code 年} / {@code 月} / {@code 日} 字样，
-	 *       或 {@code -} / {@code .} / {@code /}
-	 *       （如 "2015-03-05"、"2015年3月5日"、"2015.03.05"）。</li>
-	 * </ul>
-	 *
-	 * <p>长数字串（&gt; 8 位且无分隔符）一律判为"不像日期" —— 那通常是身份证号 /
-	 * 银行卡号 / 订单号，滑窗修出来的只会是假日期。
-	 *
-	 * @param value 原始值，非 null
-	 * @return true 表示可以尝试日期修复
-	 */
-	private static boolean looksLikeDate(String value) {
-		int digits = 0;
-		boolean hasSeparator = false;
-		for (int i = 0; i < value.length(); i++) {
-			char c = value.charAt(i);
-			if (c >= '0' && c <= '9') {
-				digits++;
-			} else if (c == '年' || c == '月' || c == '日' || c == '-' || c == '.' || c == '/') {
-				hasSeparator = true;
-			}
-		}
-		return digits == 8 || hasSeparator;
-	}
 }

@@ -122,6 +122,43 @@ public class DateRepair {
 	}
 
 	/**
+	 * 判定文本是否"像日期"，作为 {@link #repairDate} 的前置形态闸门。
+	 *
+	 * <p>判定口径（满足其一即可）：
+	 * <ul>
+	 *   <li>去掉非数字字符后<b>恰好 8 位</b>（纯数字日期，如 "20150305"）；</li>
+	 *   <li>原文含<b>日期分隔符</b>：{@code 年} / {@code 月} / {@code 日} 字样，
+	 *       或 {@code -} / {@code .} / {@code /}
+	 *       （如 "2015-03-05"、"2015年3月5日"、"2015.03.05"）。</li>
+	 * </ul>
+	 *
+	 * <p>长数字串（&gt; 8 位且无分隔符）一律判为"不像日期" —— 那通常是身份证号 /
+	 * 银行卡号 / 订单号，{@link #repairDate} 滑窗路径修出来的只会是假日期。
+	 *
+	 * <p>逻辑自通用层 {@code ValueNormalizer} 原样上移（其 {@code DATE} 归一化亦委托本方法），
+	 * 是 {@code IdCardParser} 日期归一化的同一道闸门。
+	 *
+	 * @param value 原始值，可为 null
+	 * @return true 表示可以尝试日期修复；null 返回 false
+	 */
+	public static boolean looksLikeDate(String value) {
+		if (value == null) {
+			return false;
+		}
+		int digits = 0;
+		boolean hasSeparator = false;
+		for (int i = 0; i < value.length(); i++) {
+			char c = value.charAt(i);
+			if (c >= '0' && c <= '9') {
+				digits++;
+			} else if (c == '年' || c == '月' || c == '日' || c == '-' || c == '.' || c == '/') {
+				hasSeparator = true;
+			}
+		}
+		return digits == 8 || hasSeparator;
+	}
+
+	/**
 	 * 组装并校验 {@code yyyy-MM-dd}。
 	 *
 	 * @param year  年（字符串，允许 "1996" 形态）

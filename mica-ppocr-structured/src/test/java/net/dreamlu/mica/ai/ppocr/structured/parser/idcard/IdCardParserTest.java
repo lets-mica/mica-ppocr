@@ -58,7 +58,7 @@ class IdCardParserTest extends ParserTestSupport {
 		assertEquals("测试甲", r.getName());
 		assertEquals("男", r.getGender());
 		assertEquals("汉", r.getNation());
-		assertEquals("1996 年 1 月 11 日", r.getBirthDate());
+		assertEquals("1996年1月11日", r.getBirthDate());
 		assertEquals("测试省甲市甲区", r.getAddress());
 		assertEquals("000000199601110001", r.getIdNumber());
 		// 反面字段在正面下保持 null
@@ -228,7 +228,7 @@ class IdCardParserTest extends ParserTestSupport {
 		assertEquals("测试戊", r.getName());
 		assertEquals("男", r.getGender());
 		assertEquals("汉", r.getNation());
-		assertEquals("1966 年 5 月 20 日", r.getBirthDate());
+		assertEquals("1966年5月20日", r.getBirthDate());
 		assertEquals("测试省丙市", r.getAddress());
 		assertEquals("000000660520006", r.getIdNumber());
 	}
@@ -524,5 +524,151 @@ class IdCardParserTest extends ParserTestSupport {
 		assertNotNull(r.getFieldBoxes().get("gender"), "性别应回填 fieldBoxes");
 		assertNotNull(r.getFieldBoxes().get("nation"), "民族应回填 fieldBoxes");
 		assertNotNull(r.getFieldBoxes().get("birthDate"), "出生日期应回填 fieldBoxes");
+	}
+
+	// ==================== 日期归一化（issue IKY7W1） ====================
+
+	@Test
+	void parse_birthDate_stripsOcrSpaces_byDefault() {
+		// issue 截图场景：OCR 在年/月/日间随机插入空格，默认输出必须去干净
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试甲", 160, 100, 280, 130),
+			box("出生", 60, 220, 140, 250),
+			box("1973 年10 月24 日", 160, 220, 400, 250),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000197310240019", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertEquals("1973年10月24日", r.getBirthDate());
+		// 结果字段与字段置信度必须同值（归一化只允许一个收口）
+		FieldConfidence fc = r.getFieldConfidences().get("birthDate");
+		assertNotNull(fc);
+		assertEquals("1973年10月24日", fc.value());
+	}
+
+	@Test
+	void parse_back_validTerm_stripsOcrSpaces_byDefault() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("签发机关", 200, 320, 300, 350),
+			box("测试公安局甲区分局", 320, 320, 580, 350),
+			box("有效期限", 200, 380, 300, 410),
+			box("2020.01.01 - 2030.01.01", 320, 380, 580, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		// 只去空格，格式族不变（默认不转 yyyy-MM-dd）
+		assertEquals("2020.01.01", r.getValidFrom());
+		assertEquals("2030.01.01", r.getValidTo());
+	}
+
+	@Test
+	void parse_birthDate_customFormat_labelPath() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试甲", 160, 100, 280, 130),
+			box("出生", 60, 220, 140, 250),
+			box("1996 年 1 月 11 日", 160, 220, 400, 250),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000199601110001", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals("1996-01-11", r.getBirthDate());
+		FieldConfidence fc = r.getFieldConfidences().get("birthDate");
+		assertNotNull(fc);
+		assertEquals("1996-01-11", fc.value());
+	}
+
+	@Test
+	void parse_birthDate_customFormat_patternPath() {
+		// 无"出生"标签：走 BIRTH_DATE_PATTERN 正则兜底路径，同样要归一化
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试甲", 160, 100, 280, 130),
+			box("1966 年 11 月 2 日", 160, 220, 400, 250),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000196611020002", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals(IdCardSide.FRONT, r.getSide());
+		assertEquals("1966-11-02", r.getBirthDate());
+	}
+
+	@Test
+	void parse_birthDate_customFormat_derivedPath() {
+		// 无出生标签也无独立日期框：从 15 位号推算（YY=65 → 1965），推算值也要转格式
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试甲", 160, 100, 280, 130),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000650812008", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals(IdCardSide.FRONT, r.getSide());
+		assertEquals("1965-08-12", r.getBirthDate());
+	}
+
+	@Test
+	void parse_back_validTerm_customFormat() {
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("签发机关", 200, 320, 300, 350),
+			box("测试公安局甲区分局", 320, 320, 580, 350),
+			box("有效期限", 200, 380, 300, 410),
+			box("2020.01.01-2030.01.01", 320, 380, 580, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals("2020-01-01", r.getValidFrom());
+		assertEquals("2030-01-01", r.getValidTo());
+	}
+
+	@Test
+	void parse_back_longTerm_customFormat_keptAsIs() {
+		// "长期"不是日期：配置格式后也必须原样保留（此前该分支无任何测试覆盖）
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("签发机关", 200, 320, 300, 350),
+			box("测试公安局甲区分局", 320, 320, 580, 350),
+			box("有效期限", 200, 380, 300, 410),
+			box("长期", 320, 380, 400, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals(IdCardSide.BACK, r.getSide());
+		assertEquals("长期", r.getValidFrom());
+		assertEquals("长期", r.getValidTo());
+	}
+
+	@Test
+	void parse_birthDate_customFormat_unrepairable_keptStripped() {
+		// 13 月是非法日期：修不出 → 保留去空格原值，绝不置空、绝不改写
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("姓名", 60, 100, 140, 130),
+			box("测试甲", 160, 100, 280, 130),
+			box("出生", 60, 220, 140, 250),
+			box("1996.13.45", 160, 220, 400, 250),
+			box("公民身份号码", 60, 380, 240, 410),
+			box("000000199601110001", 260, 380, 600, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null, "yyyy-MM-dd"), results);
+		assertEquals("1996.13.45", r.getBirthDate());
+	}
+
+	@Test
+	void parse_back_dashOnlyTerm_noException() {
+		// 既有 bug：值为 "-" 时 split 返回长度 0 数组，原实现 parts[0] 直接 AIOOBE
+		List<PPOcrV6Result> results = CollUtil.listOf(
+			box("签发机关", 200, 320, 300, 350),
+			box("测试公安局甲区分局", 320, 320, 580, 350),
+			box("有效期限", 200, 380, 300, 410),
+			box("-", 320, 380, 350, 410)
+		);
+		IdCardResult r = parse(new IdCardParser(null), results);
+		assertEquals("-", r.getValidFrom());
+		assertEquals("-", r.getValidTo());
+	}
+
+	@Test
+	void constructor_invalidDateFormat_throws() {
+		// 未闭合引号 → DateTimeFormatter.ofPattern 构造期即抛，fail-fast
+		assertThrows(IllegalArgumentException.class, () -> new IdCardParser(null, "yyyy-MM-dd'"));
+		// 含时间字段的 pattern 无法用于 LocalDate，同样构造期报错
+		assertThrows(IllegalArgumentException.class, () -> new IdCardParser(null, "yyyy-MM-dd HH:mm"));
 	}
 }
